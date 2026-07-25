@@ -9,8 +9,10 @@ downloads, media editing and more. Deploy your own copy in a couple of minutes.
 
 ### 1. Get your session ID
 
-Go to the pairing site, enter your WhatsApp number, and you'll get an 8-character
-code. Link it on your phone:
+**→ [david-pair-x6t8.onrender.com](https://david-pair-x6t8.onrender.com)**
+
+Enter your WhatsApp number and you'll get an 8-character code. Link it on your
+phone:
 
 > **WhatsApp → Settings → Linked Devices → Link a Device → Link with phone number instead**
 

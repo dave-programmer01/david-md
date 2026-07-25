@@ -9,7 +9,7 @@
 //
 //   THIS IS THE ONLY FILE YOU NEED TO EDIT.
 //
-//   1. Get your SESSION ID from the pairing website.
+//   1. Get your SESSION ID from https://david-pair-x6t8.onrender.com
 //   2. Paste it between the quotes on the SESSION_ID line below.
 //   3. Save this file, then deploy. That's it.
 //
