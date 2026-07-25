@@ -1,0 +1,60 @@
+{
+  "name": "David-MD",
+  "description": "A multi-purpose WhatsApp bot — 162 commands, deploy your own in a couple of minutes.",
+  "repository": "https://github.com/dave-programmer01/david-md",
+  "logo": "https://raw.githubusercontent.com/dave-programmer01/david-md/main/.github/logo.png",
+  "keywords": ["whatsapp", "bot", "baileys", "nodejs"],
+  "stack": "container",
+  "env": {
+    "SESSION_ID": {
+      "description": "Only needed if you did NOT edit config.js. Paste the session ID the pairing site sent you on WhatsApp — it starts with David~ and is about 2500 characters.",
+      "required": false
+    },
+    "OWNER_NUMBER": {
+      "description": "Your WhatsApp number with country code, digits only (e.g. 2348012345678). Leave blank and the bot uses the paired account.",
+      "required": false
+    },
+    "OWNER_NAME": {
+      "description": "The name shown as the bot's owner.",
+      "value": "David",
+      "required": false
+    },
+    "BOT_NAME": {
+      "description": "What the bot calls itself.",
+      "value": "David-md",
+      "required": false
+    },
+    "PREFIX": {
+      "description": "The character before every command.",
+      "value": ".",
+      "required": false
+    },
+    "MODE": {
+      "description": "private = only you can use it. public = anyone can.",
+      "value": "private",
+      "required": false
+    },
+    "ANTHROPIC_API_KEY": {
+      "description": "Optional. Only needed for the .ai and .chatbot commands — get one at console.anthropic.com. Every other command works without it.",
+      "required": false
+    },
+    "DATABASE_URL": {
+      "description": "Strongly recommended on Heroku. Heroku wipes the filesystem every day, so without a Postgres database your settings reset daily. Add the free Heroku Postgres add-on and this fills in automatically.",
+      "required": false
+    }
+  },
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0",
+      "options": {
+        "version": "16"
+      }
+    }
+  ],
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+build:
+  docker:
+    worker: Dockerfile
+run:
+  # A worker, not a web dyno: the bot never binds $PORT, and Heroku kills a web
+  # dyno that doesn't bind one within 60 seconds.
+  worker: node index.js

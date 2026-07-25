@@ -1,0 +1,30 @@
+services:
+  david-md:
+    build: .
+    container_name: david-md
+    restart: unless-stopped
+
+    volumes:
+      # Settings, warnings, filters, scheduled messages.
+      - david-data:/app/data
+      # The live session. Keeping this means the bot resumes instantly instead
+      # of re-reading config.js and re-linking on every restart.
+      - david-session:/app/session
+      # Plugins installed with .install
+      - ./plugins:/app/plugins
+
+    # Nothing is needed here — your session ID lives in config.js, which is
+    # already inside the image. These are only for overriding it if you'd
+    # rather not edit the file.
+    # environment:
+    #   SESSION_ID: "David~..."
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  david-data:
+  david-session:
