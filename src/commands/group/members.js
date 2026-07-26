@@ -102,12 +102,17 @@ module.exports = [
     usage: ".fumigate  then  .fumigate confirm",
     permission: "botAdmin",
     execute: async (ctx) => {
-      const admins = new Set(
-        ctx.participants.filter((p) => ["admin", "superadmin"].includes(p.admin)).map((p) => jidNormalizedUser(p.id))
-      );
+      // Identity matching, not string equality: in a LID-addressed group the
+      // bot's own phone JID won't equal its participant id, and the bot would
+      // end up in its own removal list.
+      const { sameUser } = require("../../lib/ctx");
+      const botIds = [ctx.botJid, ctx.sock.user?.lid].filter(Boolean);
+
+      const admins = ctx.participants.filter((p) => ["admin", "superadmin"].includes(p.admin));
       const victims = ctx.participants
-        .map((p) => jidNormalizedUser(p.id))
-        .filter((jid) => !admins.has(jid) && jid !== ctx.botJid);
+        .filter((p) => !["admin", "superadmin"].includes(p.admin))
+        .filter((p) => !sameUser([p.id, p.jid, p.lid].filter(Boolean), botIds))
+        .map((p) => jidNormalizedUser(p.id));
 
       if (!victims.length) return ctx.reply("Everyone here is already an admin — nothing to do.");
 
@@ -115,7 +120,7 @@ module.exports = [
       if (ctx.args[0]?.toLowerCase() !== "confirm") {
         return ctx.reply(
           `⚠️ *This will remove ${victims.length} member${victims.length === 1 ? "" : "s"}.*\n\n` +
-            `${admins.size} admin${admins.size === 1 ? "" : "s"} will stay. This cannot be undone.\n\n` +
+            `${admins.length} admin${admins.length === 1 ? "" : "s"} will stay. This cannot be undone.\n\n` +
             `Estimated time: about ${Math.ceil((victims.length / BATCH_SIZE) * (BATCH_DELAY / 1000))}s ` +
             `— I remove people in small batches so WhatsApp doesn't flag the account.\n\n` +
             `If you're sure:\n*${ctx.prefix}fumigate confirm*`
@@ -129,7 +134,7 @@ module.exports = [
         `🧹 *Done*\n\n` +
           `Removed : ${done.length}\n` +
           `Failed  : ${failed.length}\n` +
-          `Admins kept : ${admins.size}`
+          `Admins kept : ${admins.length}`
       );
     },
   },

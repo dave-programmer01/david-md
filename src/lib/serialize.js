@@ -70,6 +70,29 @@ function serialize(sock, raw) {
       ? botJid
       : jidNormalizedUser(chat || "");
 
+  /**
+   * WhatsApp addresses users two ways now — a phone-number JID
+   * (@s.whatsapp.net) and an anonymised LID (@lid) — and a group uses one or
+   * the other depending on its addressingMode. The two never compare equal, so
+   * anything matching a sender against a participant list has to try every
+   * identity the message carries, not just `key.participant`.
+   */
+  const senderIds = [
+    ...new Set(
+      [
+        sender,
+        raw.key.participantPn,
+        raw.key.participantLid,
+        raw.key.senderPn,
+        raw.key.senderLid,
+        !isGroup ? chat : null,
+      ]
+        .filter(Boolean)
+        .map(jidNormalizedUser)
+        .filter(Boolean)
+    ),
+  ];
+
   const context =
     message.extendedTextMessage?.contextInfo ||
     message[type]?.contextInfo ||
@@ -110,6 +133,7 @@ function serialize(sock, raw) {
     isDM: !isGroup,
     fromMe,
     sender,
+    senderIds,
     pushName: raw.pushName || "",
     timestamp: Number(raw.messageTimestamp || 0) * 1000,
     type,

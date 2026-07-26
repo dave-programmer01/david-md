@@ -1,6 +1,6 @@
 const db = require("../db");
 const store = require("../store");
-const { groupMetadata } = require("../lib/ctx");
+const { groupMetadata, findParticipant } = require("../lib/ctx");
 const { jidNormalizedUser } = require("@whiskeysockets/baileys");
 
 const GROUP_LINK = /chat\.whatsapp\.com\/[A-Za-z0-9]{10,}/i;
@@ -8,10 +8,15 @@ const ANY_LINK = /(https?:\/\/|www\.)\S+/i;
 
 const numberOf = (jid) => String(jid || "").split("@")[0].split(":")[0];
 
-async function isAdminIn(sock, chat, jid) {
+/**
+ * Accepts either a single JID or every identity a sender is known by, because
+ * a group addressed by LID won't match a phone JID (see lib/ctx.js).
+ * Getting this wrong here means admins get moderated by their own anti-link.
+ */
+async function isAdminIn(sock, chat, identities) {
   try {
     const meta = await groupMetadata(sock, chat);
-    const entry = (meta.participants || []).find((p) => jidNormalizedUser(p.id) === jid);
+    const entry = findParticipant(meta.participants, identities);
     return ["admin", "superadmin"].includes(entry?.admin);
   } catch {
     return false;
@@ -19,7 +24,8 @@ async function isAdminIn(sock, chat, jid) {
 }
 
 async function botIsAdmin(sock, chat) {
-  return isAdminIn(sock, chat, jidNormalizedUser(sock.user?.id || ""));
+  const ids = [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
+  return isAdminIn(sock, chat, ids);
 }
 
 /** Delete a message, and kick or warn depending on the configured action. */
@@ -125,7 +131,7 @@ async function antilink(sock, m, g) {
   if (!g.antilink || !m.body) return false;
   const pattern = g.antilinkAll ? ANY_LINK : GROUP_LINK;
   if (!pattern.test(m.body)) return false;
-  if (await isAdminIn(sock, m.chat, m.sender)) return false;
+  if (await isAdminIn(sock, m.chat, m.senderIds || [m.sender])) return false;
   return enforce(sock, m, g.antilinkAction || "warn", "links are not allowed here");
 }
 
@@ -134,13 +140,13 @@ async function antiword(sock, m, g) {
   const lower = m.body.toLowerCase();
   const hit = g.antiwords.find((w) => lower.includes(String(w).toLowerCase()));
   if (!hit) return false;
-  if (await isAdminIn(sock, m.chat, m.sender)) return false;
+  if (await isAdminIn(sock, m.chat, m.senderIds || [m.sender])) return false;
   return enforce(sock, m, g.antiwordAction || "warn", "that word is blocked here");
 }
 
 async function antispam(sock, m, g) {
   if (!g.antispam) return false;
-  if (await isAdminIn(sock, m.chat, m.sender)) return false;
+  if (await isAdminIn(sock, m.chat, m.senderIds || [m.sender])) return false;
 
   const key = `${m.chat}:${m.sender}`;
   const hits = (store.spamCounters.get(key) || []).filter((t) => Date.now() - t < 10_000);
@@ -160,7 +166,7 @@ async function antibot(sock, m, g) {
   const id = m.id || "";
   const looksAutomated = /^3EB0/.test(id) || (id.length >= 32 && /^[0-9A-F]+$/.test(id));
   if (!looksAutomated) return false;
-  if (await isAdminIn(sock, m.chat, m.sender)) return false;
+  if (await isAdminIn(sock, m.chat, m.senderIds || [m.sender])) return false;
   return enforce(sock, m, "kick", "bots are not allowed here");
 }
 
