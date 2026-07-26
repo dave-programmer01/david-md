@@ -51,7 +51,7 @@ const YT_CLIENTS = ["default", "tv_simply", "web_safari", "mweb", "tv"];
  * single bad roll failed the whole command.
  */
 const isRetryable = (message) =>
-  /Sign in to confirm|not a bot|confirm your age|429|Too Many Requests|HTTP Error 403|Forbidden|unable to download video data|fragment.*not found/i.test(
+  /Sign in to confirm|not a bot|confirm your age|429|Too Many Requests|HTTP Error 403|Forbidden|unable to download video data|fragment.*not found|Requested format is not available|No video formats|nothing to download/i.test(
     String(message)
   );
 
@@ -117,27 +117,36 @@ function run(args, { timeout = 180_000 } = {}) {
  * refuses. Non-YouTube URLs, and errors that a different client won't fix,
  * fail on the first try — retrying those would only be slow.
  *
- * Whichever client last succeeded is tried first next time; without that, every
- * call re-walks the list from the top and one blocked client taxes every
- * request for the life of the process.
+ * A fallback client that worked once is tried first for a short while, so a
+ * blocked `default` doesn't tax every subsequent call. It deliberately expires:
+ * `default` offers far more formats than the fallbacks (27 vs 5 on a sample
+ * video, 5 with audio vs 1), and some fallbacks return no formats at all for
+ * some videos. Sticking to one permanently degrades every later request.
  */
-let preferredClient = null;
+const PREFERENCE_TTL = 10 * 60_000;
+let preferred = null;
+
+function clientOrder() {
+  const stale = !preferred || Date.now() - preferred.at > PREFERENCE_TTL;
+  if (stale) {
+    preferred = null;
+    return YT_CLIENTS;
+  }
+  return [preferred.client, ...YT_CLIENTS.filter((c) => c !== preferred.client)];
+}
 
 async function withClientFallback(url, operation) {
   if (!isYouTube(url)) return operation(null);
 
-  const order = preferredClient
-    ? [preferredClient, ...YT_CLIENTS.filter((c) => c !== preferredClient)]
-    : YT_CLIENTS;
-
-  for (const client of order) {
+  for (const client of clientOrder()) {
     try {
       const result = await operation(client);
-      preferredClient = client;
+      // Only worth remembering a fallback — `default` is already tried first.
+      preferred = client === "default" ? null : { client, at: Date.now() };
       return result;
     } catch (err) {
       if (!isRetryable(err.message)) throw err;
-      if (preferredClient === client) preferredClient = null;
+      if (preferred?.client === client) preferred = null;
       console.log(`  ↳ "${client}" client failed (${err.message.split("\n")[0].slice(0, 60)}) — trying the next`);
     }
   }
