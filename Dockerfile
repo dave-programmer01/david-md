@@ -39,6 +39,29 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -rf /var/lib/apt/lists/* \
     && deno --version
 
+# PO Token provider.
+#
+# YouTube refuses datacentre IPs outright — every player client answers "Sign
+# in to confirm you're not a bot", so retrying across clients cannot help. A
+# Proof-of-Origin token is what actually satisfies that check. yt-dlp has the
+# framework built in but ships no provider; this is the standard one, run
+# through the deno runtime that's already here.
+ENV DENO_DIR=/opt/deno-cache
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
+    && pip install --break-system-packages --no-cache-dir bgutil-ytdlp-pot-provider \
+    && mkdir -p /opt/bgutil \
+    && curl -fsSL https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/1.3.1.tar.gz -o /tmp/bgutil.tgz \
+    && tar xzf /tmp/bgutil.tgz -C /opt/bgutil --strip-components=1 \
+    && rm -f /tmp/bgutil.tgz \
+    && cd /opt/bgutil/server \
+    && deno install --allow-scripts \
+    && deno cache src/generate_once.ts \
+    && chmod -R a+rX /opt/bgutil /opt/deno-cache \
+    && apt-get purge -y python3-pip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV BGUTIL_POT_SCRIPT=/opt/bgutil/server/src/generate_once.ts
+
 WORKDIR /app
 
 # Copy manifests first so `npm ci` is cached until dependencies actually change.

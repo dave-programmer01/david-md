@@ -66,6 +66,14 @@ function youtubeArgs(client) {
   const deno = localBinary("deno", "DENO_PATH");
   if (deno && !process.env.DENO_ON_PATH) args.push("--js-runtimes", `deno:${deno}`);
 
+  // A Proof-of-Origin token is the only thing that answers YouTube's
+  // "confirm you're not a bot" from a datacentre address — no player client
+  // gets past it without one. Set by the Docker image; absent elsewhere, in
+  // which case yt-dlp simply carries on without a token.
+  if (process.env.BGUTIL_POT_SCRIPT && fs.existsSync(process.env.BGUTIL_POT_SCRIPT)) {
+    args.push("--extractor-args", `youtubepot-bgutilscript:script_path=${process.env.BGUTIL_POT_SCRIPT}`);
+  }
+
   // A cookies file lifts the bot check outright. Optional — most installs
   // never need it, and cookies from a logged-in account used via a datacenter
   // IP can get that account flagged, so it stays opt-in.
