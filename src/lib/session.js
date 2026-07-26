@@ -72,9 +72,9 @@ function restoreSession() {
     fatal(["", "  SESSION ID IS NOT VALID", "", "  It could not be decoded. Copy it again from WhatsApp.", ""]);
   }
 
-  let creds;
+  let parsed;
   try {
-    creds = JSON.parse(decoded);
+    parsed = JSON.parse(decoded);
   } catch {
     fatal([
       "",
@@ -87,7 +87,23 @@ function restoreSession() {
     ]);
   }
 
-  if (!creds || !creds.noiseKey || !creds.me) {
+  fs.mkdirSync(S.SESSION_DIR, { recursive: true });
+
+  if (parsed["creds.json"]) {
+    // New format: bundle of all session files
+    for (const [filename, b64] of Object.entries(parsed)) {
+      if (filename.endsWith(".json")) {
+        fs.writeFileSync(path.join(S.SESSION_DIR, filename), Buffer.from(b64, "base64"));
+      }
+    }
+    const credsStr = Buffer.from(parsed["creds.json"], "base64").toString("utf8");
+    const creds = JSON.parse(credsStr);
+    console.log(`✅ Session restored for ${creds.me?.name || creds.me?.id || "your account"}.`);
+  } else if (parsed.noiseKey && parsed.me) {
+    // Old format: just creds.json content
+    fs.writeFileSync(credsPath, decoded);
+    console.log(`✅ Session restored for ${parsed.me?.name || parsed.me?.id || "your account"}.`);
+  } else {
     fatal([
       "",
       "  SESSION ID IS MISSING ITS LOGIN KEYS",
@@ -97,10 +113,6 @@ function restoreSession() {
       "",
     ]);
   }
-
-  fs.mkdirSync(S.SESSION_DIR, { recursive: true });
-  fs.writeFileSync(credsPath, decoded);
-  console.log(`✅ Session restored for ${creds.me.name || creds.me.id || "your account"}.`);
 }
 
 /** Build a session ID out of the current creds — used by .getsession and tests. */

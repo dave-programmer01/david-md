@@ -29,10 +29,10 @@ COPY . .
 
 # Runtime state. Mount a volume here so settings and the session survive a
 # container rebuild.
+# Runtime state.
 RUN mkdir -p data/media data/tmp session plugins
 
 ENV NODE_ENV=production
-VOLUME ["/app/data", "/app/session"]
 
 # tini reaps the ffmpeg and yt-dlp child processes; without it they pile up as
 # zombies over a long-running deployment.

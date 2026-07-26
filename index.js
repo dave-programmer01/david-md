@@ -101,6 +101,14 @@ async function startBot() {
         if (number) {
           await db.set("ownerNumber", number);
           console.log(`👑 Owner set to ${number} (change it with .setownernumber)`);
+          
+          try {
+            await sock.sendMessage(me, {
+              text: "🎉 *Welcome to David-MD!*\n\nYour bot has been successfully paired, deployed, and connected!\n\nType *.menu* to see what I can do!"
+            });
+          } catch (err) {
+            console.error("Failed to send welcome message:", err.message);
+          }
         }
       }
 

@@ -83,6 +83,29 @@ docker compose down         # stop
 </details>
 
 <details>
+<summary><b>Railway</b></summary>
+
+1. **New Project → Deploy from GitHub repo →** pick **`david-md`**
+   Point it at *this repo*, not a folder containing it. Railway needs the
+   `Dockerfile` at the root of what it builds; if it reports
+   *"could not determine how to build the app"* it's looking one level too high
+   — open **Settings → Root Directory** and set it to `david-md`.
+2. **Variables →** add `SESSION_ID` with the ID from the pairing site.
+   (You can paste it into `config.js` instead, but only if your copy of the
+   repo is **private** — the variable is safer.)
+3. **Variables →** optionally add `OWNER_NUMBER`, `OWNER_NAME`, `BOT_NAME`,
+   `PREFIX`, `MODE`.
+4. **Add a volume** — this one matters. **Settings → Volumes → Add**, mount
+   path `/app/session`. Without it, every redeploy throws away the signal keys
+   the bot has accumulated and group messages start failing to decrypt. Add a
+   second volume at `/app/data` to keep your settings across deploys.
+
+`railway.json` already selects the Dockerfile builder and sets the restart
+policy, so `.restart` and `.update` bring the bot back up.
+
+</details>
+
+<details>
 <summary><b>Pterodactyl panel</b></summary>
 
 1. Create a **Node.js** server
