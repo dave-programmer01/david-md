@@ -28,7 +28,7 @@
 
 // ─── PASTE YOUR SESSION ID HERE ────────────────────────────────────────
 // It is a long string that starts with "David~". Paste the WHOLE thing —
-// it is around 2500 characters, so make sure you copied the very end too.
+// it is a few thousand characters, so make sure you copied the very end too.
 
 const SESSION_ID = "PASTE_YOUR_SESSION_ID_HERE";
 
