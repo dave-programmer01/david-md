@@ -191,6 +191,10 @@ again; it's a few thousand characters.
 **"LOGGED OUT"** — the session was unlinked. On your phone, remove the device
 under Linked Devices, then generate a fresh session ID.
 
+**`npm error code EALLOWGIT`** — a host that blocks git fetching (most panels
+do). Nothing is fetched from git any more; if you hit this, you're on an older
+copy — re-download the repo.
+
 **Media commands fail** — `ffmpeg` isn't installed. Use the Docker image, or
 install it (see the VPS section).
 

@@ -141,6 +141,11 @@ npm install
 This takes 1–3 minutes. Some warnings scrolling past are normal — an `npm ERR!`
 is not.
 
+> **If you see `npm error code EALLOWGIT`**, you're on an older copy of the bot.
+> Baileys used to pull one dependency straight from GitHub, and most panels
+> block git fetching for security. Download the repo again — current versions
+> install everything from the npm registry, with no git access needed.
+
 This also installs **ffmpeg**, which every sticker, audio and video command
 needs. It arrives as a normal npm package, so no root is required.
 
