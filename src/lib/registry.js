@@ -24,7 +24,8 @@ const MENU_ORDER = [
   "mention", "reload", "reboot", "delete",
   // Owner
   "allvar", "settings", "setsudo", "getsudo", "callreject", "install", "plugin",
-  "remove", "pupdate", "block", "join", "unblock", "pp", "gpp", "update",
+  "remove", "pupdate", "ban", "unban", "banlist", "block", "join", "unblock",
+  "pp", "gpp", "update",
   // Settings
   "setprefix", "platform", "language", "mode", "antidelete", "setinfo", "setname",
   "setowner", "setownernumber", "setimage", "setstickername", "setstickerauthor",

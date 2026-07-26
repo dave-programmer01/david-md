@@ -124,7 +124,15 @@ async function handleOne(sock, raw) {
   const cmd = registry.resolve(name);
   if (!cmd) return;
 
-  if (!m.fromMe && (await db.raw().get(db.BANNED, m.sender, false))) return;
+  // Check every identity the sender is known by. A ban recorded against a
+  // phone JID would otherwise be sidestepped in a LID-addressed group, where
+  // the same person arrives under a different one.
+  if (!m.fromMe) {
+    const identities = m.senderIds?.length ? m.senderIds : [m.sender].filter(Boolean);
+    for (const jid of identities) {
+      if (await db.raw().get(db.BANNED, jid, false)) return;
+    }
+  }
 
   const ctx = await buildContext({ sock, m, command: cmd, args, text, prefix });
 

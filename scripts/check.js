@@ -12,7 +12,7 @@ const db = require("../src/db");
 const menu = require("../src/lib/menu");
 const font = require("../src/lib/font");
 
-const EXPECTED = 162;
+const EXPECTED = 165;
 
 let failures = 0;
 const ok = (msg) => console.log(`  ✅ ${msg}`);
