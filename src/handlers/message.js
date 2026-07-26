@@ -46,18 +46,25 @@ function noticeOnce(key, message) {
 }
 
 async function handleMessageUpsert(sock, upsert) {
+  store.stats.upserts += 1;
+
   if (process.env.DEBUG_MESSAGES === "1") {
     console.log(`📨 upsert type=${upsert.type} count=${(upsert.messages || []).length}`);
   }
 
   // "append" is history and offline backlog replayed on reconnect; acting on it
   // would re-run commands from before the bot started.
-  if (upsert.type !== "notify") return;
+  if (upsert.type !== "notify") {
+    store.stats.skippedNotNotify += (upsert.messages || []).length;
+    return;
+  }
 
   for (const raw of upsert.messages || []) {
     try {
+      store.stats.messages += 1;
       await handleOne(sock, raw);
     } catch (err) {
+      store.stats.errors += 1;
       console.error("Message handler error:", err.message);
     }
   }
@@ -79,6 +86,7 @@ async function handleOne(sock, raw) {
     // Message timestamps come from WhatsApp's clock and botStartTimestamp from
     // the container's. If the container clock runs ahead, live messages look
     // like backlog and vanish — worth naming rather than dropping in silence.
+    store.stats.skippedBacklog += 1;
     const behind = Math.round((store.botStartTimestamp - m.timestamp) / 1000);
     noticeOnce("backlog", `⏭️  Skipping message ${behind}s older than start-up (backlog).` +
       (behind < 300 ? " If this repeats on fresh messages, the container clock is ahead of WhatsApp's." : ""));
@@ -137,6 +145,7 @@ async function handleOne(sock, raw) {
   const denial = checkPermission(cmd, ctx);
   if (denial) return void (await ctx.reply(denial));
 
+  store.stats.commands += 1;
   store.lastCommand.set(m.chat, { name, args, text });
 
   const autoReact = (await db.get("autoReact")) && cmd.react !== false;

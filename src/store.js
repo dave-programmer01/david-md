@@ -9,6 +9,17 @@ module.exports = {
   isConnected: false,
   sock: null,
 
+  // Counters behind the heartbeat. They exist to answer one question a silent
+  // bot can't otherwise answer: is it dead, or alive and receiving nothing?
+  stats: {
+    upserts: 0,
+    messages: 0,
+    skippedBacklog: 0,
+    skippedNotNotify: 0,
+    commands: 0,
+    errors: 0,
+  },
+
   // Sticker flow: media arriving just before/after a `.sticker` caption.
   recentImages: new Map(),
   activeStickerRequests: new Map(),

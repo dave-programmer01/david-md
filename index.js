@@ -61,6 +61,29 @@ function splash(count) {
   );
 }
 
+/**
+ * Periodic proof-of-life.
+ *
+ * A bot that logs "Listening" and then nothing looks identical whether the
+ * process died, the socket is up but WhatsApp is delivering nothing, or
+ * messages are arriving and being filtered. The counters separate those.
+ */
+let heartbeat = null;
+function startHeartbeat() {
+  if (heartbeat) clearInterval(heartbeat);
+  heartbeat = setInterval(() => {
+    const s = store.stats;
+    const mins = Math.round((Date.now() - store.botStartTimestamp) / 60000);
+    console.log(
+      `💓 up ${mins}m | socket ${store.isConnected ? "open" : "CLOSED"} | ` +
+        `upserts ${s.upserts} messages ${s.messages} commands ${s.commands} | ` +
+        `skipped ${s.skippedNotNotify} backlog ${s.skippedBacklog} errors ${s.errors}` +
+        (s.upserts === 0 ? "  ← nothing at all from WhatsApp yet" : "")
+    );
+  }, 5 * 60_000);
+  if (heartbeat.unref) heartbeat.unref();
+}
+
 async function startBot() {
   if (connecting) return;
   connecting = true;
@@ -129,6 +152,7 @@ async function startBot() {
 
       await rehydrateSchedules(sock);
       startAutoMute(sock);
+      startHeartbeat();
       console.log("👂 Listening…\n");
     }
 
