@@ -36,8 +36,24 @@ function checkPermission(cmd, ctx) {
   }
 }
 
+// Rate-limited so a chatty group can't flood the log with the same notice.
+const noticed = new Map();
+function noticeOnce(key, message) {
+  const last = noticed.get(key) || 0;
+  if (Date.now() - last < 60_000) return;
+  noticed.set(key, Date.now());
+  console.log(message);
+}
+
 async function handleMessageUpsert(sock, upsert) {
+  if (process.env.DEBUG_MESSAGES === "1") {
+    console.log(`📨 upsert type=${upsert.type} count=${(upsert.messages || []).length}`);
+  }
+
+  // "append" is history and offline backlog replayed on reconnect; acting on it
+  // would re-run commands from before the bot started.
   if (upsert.type !== "notify") return;
+
   for (const raw of upsert.messages || []) {
     try {
       await handleOne(sock, raw);
@@ -59,7 +75,15 @@ async function handleOne(sock, raw) {
 
   // Ignore backlog delivered on reconnect — otherwise every command queued
   // while the bot was offline fires at once the moment it returns.
-  if (m.timestamp && m.timestamp < store.botStartTimestamp - 60_000) return;
+  if (m.timestamp && m.timestamp < store.botStartTimestamp - 60_000) {
+    // Message timestamps come from WhatsApp's clock and botStartTimestamp from
+    // the container's. If the container clock runs ahead, live messages look
+    // like backlog and vanish — worth naming rather than dropping in silence.
+    const behind = Math.round((store.botStartTimestamp - m.timestamp) / 1000);
+    noticeOnce("backlog", `⏭️  Skipping message ${behind}s older than start-up (backlog).` +
+      (behind < 300 ? " If this repeats on fresh messages, the container clock is ahead of WhatsApp's." : ""));
+    return;
+  }
 
   // Drives "Total Users" in the menu and the `.users` command.
   if (!m.fromMe && m.sender) await db.raw().set(db.USERS, m.sender, Date.now());
@@ -98,7 +122,17 @@ async function handleOne(sock, raw) {
 
   // Private mode: the bot answers only its owner and sudo users.
   const mode = (await db.get("mode")) || S.MODE;
-  if (mode === "private" && !ctx.isSudo) return;
+  if (mode === "private" && !ctx.isSudo) {
+    // Silence here is correct behaviour but indistinguishable from a broken
+    // bot, and it's the trap you hit when OWNER_NUMBER doesn't match the
+    // account that was paired. Say so in the log.
+    const owner = (await db.get("ownerNumber")) || "(not set)";
+    noticeOnce(`mode:${ctx.senderNumber}`,
+      `🔒 Ignored ${prefix}${name} from ${ctx.senderNumber} — private mode, and that is not the owner (${owner}).\n` +
+      `   Fix from the paired account with: ${prefix}setownernumber ${ctx.senderNumber}\n` +
+      `   Or open it up with: ${prefix}mode public`);
+    return;
+  }
 
   const denial = checkPermission(cmd, ctx);
   if (denial) return void (await ctx.reply(denial));

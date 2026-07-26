@@ -95,13 +95,15 @@ async function startBot() {
       const me = jidNormalizedUser(sock.user?.id || "");
       console.log(`✅ Connected as ${sock.user?.name || me}`);
 
+      const pairedNumber = me.split("@")[0];
+      const configuredOwner = await db.get("ownerNumber");
+
       // First boot with no owner configured: assume the paired account.
-      if (!(await db.get("ownerNumber"))) {
-        const number = me.split("@")[0];
-        if (number) {
-          await db.set("ownerNumber", number);
-          console.log(`👑 Owner set to ${number} (change it with .setownernumber)`);
-          
+      if (!configuredOwner) {
+        if (pairedNumber) {
+          await db.set("ownerNumber", pairedNumber);
+          console.log(`👑 Owner set to ${pairedNumber} (change it with .setownernumber)`);
+
           try {
             await sock.sendMessage(me, {
               text: "🎉 *Welcome to David-MD!*\n\nYour bot has been successfully paired, deployed, and connected!\n\nType *.menu* to see what I can do!"
@@ -110,6 +112,19 @@ async function startBot() {
             console.error("Failed to send welcome message:", err.message);
           }
         }
+      } else if (configuredOwner !== pairedNumber) {
+        // In private mode the bot answers only the owner. If that number isn't
+        // the account that was paired, whoever deployed it gets silence — which
+        // is indistinguishable from a broken bot.
+        const mode = (await db.get("mode")) || S.MODE;
+        console.log(
+          `\n⚠️  OWNER_NUMBER is ${configuredOwner}, but the paired account is ${pairedNumber}.` +
+            (mode === "private"
+              ? `\n   Private mode replies only to ${configuredOwner}; messages from anyone else are ignored.` +
+                `\n   Either message the bot from ${configuredOwner}, or clear OWNER_NUMBER so it` +
+                `\n   defaults to the paired account, or switch to public mode.\n`
+              : `\n   Mode is public, so everyone gets a reply regardless.\n`)
+        );
       }
 
       await rehydrateSchedules(sock);
