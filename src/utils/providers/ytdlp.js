@@ -10,7 +10,24 @@ const crypto = require("crypto");
  * Reddit and SoundCloud from one interface, and — crucially — it updates
  * itself when those sites change, which hand-rolled scrapers do not.
  */
-const BIN = process.env.YTDLP_PATH || "yt-dlp";
+const APP_ROOT = path.join(__dirname, "..", "..", "..");
+
+/**
+ * Find a binary that may not be on PATH.
+ *
+ * Panels like Pterodactyl give you no root, so yt-dlp and deno can't be
+ * installed system-wide — but both are single static binaries that can simply
+ * be dropped next to the bot. Checking the app root makes that work with no
+ * environment variables and no custom startup command.
+ */
+function localBinary(name, envVar) {
+  if (process.env[envVar] && fs.existsSync(process.env[envVar])) return process.env[envVar];
+  const beside = path.join(APP_ROOT, name);
+  if (fs.existsSync(beside)) return beside;
+  return null;
+}
+
+const BIN = localBinary("yt-dlp", "YTDLP_PATH") || "yt-dlp";
 
 // WhatsApp rejects media much beyond this; failing early beats a long download
 // that can never be delivered.
@@ -31,6 +48,13 @@ const isBotCheck = (message) =>
 /** Shared flags for every YouTube call. */
 function youtubeArgs(client) {
   const args = ["--no-warnings", "--no-playlist"];
+
+  // yt-dlp needs a JS runtime to decipher YouTube signatures. It finds deno on
+  // PATH by itself (the Docker image installs it there); this covers the case
+  // where deno was dropped beside the bot instead, which is the only option
+  // on a panel with no root.
+  const deno = localBinary("deno", "DENO_PATH");
+  if (deno && !process.env.DENO_ON_PATH) args.push("--js-runtimes", `deno:${deno}`);
 
   // A cookies file lifts the bot check outright. Optional — most installs
   // never need it, and cookies from a logged-in account used via a datacenter

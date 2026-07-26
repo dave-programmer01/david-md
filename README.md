@@ -108,11 +108,16 @@ policy, so `.restart` and `.update` bring the bot back up.
 <details>
 <summary><b>Pterodactyl panel</b></summary>
 
-1. Create a **Node.js** server
-2. Upload this folder (with your edited `config.js`)
-3. Set the startup command to `node index.js`
-4. From the console, run `npm install`
-5. Press **Start**
+1. Create a **Node.js** server (Node 20+)
+2. Upload the ZIP, unarchive it, move the files to `/home/container`
+3. Edit `config.js` in the panel's file editor and paste your session ID
+4. Console: `npm install` — this brings ffmpeg with it
+5. Startup command: `node index.js`, then press **Start**
+
+For downloads, drop `yt-dlp` and `deno` next to the bot — no root needed, and
+they're picked up automatically.
+
+**→ [Full step-by-step guide with screenshots of every value](docs/PANEL.md)**
 
 </details>
 
