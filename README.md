@@ -193,6 +193,18 @@ install it (see the VPS section).
 with `yt-dlp -U`. These commands depend on third-party sites and break from time
 to time; that is inherent to what they do, not a bug in the bot.
 
+**"Sign in to confirm you're not a bot"** — YouTube challenges datacentre IPs,
+which is what every cloud host has. The bot retries across several player
+clients automatically, and the Docker image ships Deno so yt-dlp can decipher
+signatures properly (without a JS runtime it falls back to exactly the clients
+YouTube blocks hardest). If it still happens:
+
+- Wait a few minutes — the block is usually temporary
+- Not using Docker? Install Deno so yt-dlp has a JS runtime
+- As a last resort, export YouTube cookies to a file and point `YT_COOKIES` at
+  it. Note that using a logged-in account's cookies from a datacentre IP can get
+  that account flagged, so prefer a throwaway.
+
 **Settings keep resetting** — you're on Heroku without the Postgres add-on.
 
 **`.ai` says it needs a key** — put an Anthropic key in `config.js`. Every other

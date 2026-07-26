@@ -16,6 +16,36 @@ const BIN = process.env.YTDLP_PATH || "yt-dlp";
 // that can never be delivered.
 const MAX_BYTES = 48 * 1024 * 1024;
 
+/**
+ * YouTube challenges datacenter IPs with "Sign in to confirm you're not a bot",
+ * and which player client you present changes how often that happens. There is
+ * no single client that always works, so the ones that need no login are tried
+ * in turn. `default` goes first because with a JS runtime present (deno, in the
+ * Docker image) it gives the best formats.
+ */
+const YT_CLIENTS = ["default", "tv_simply", "web_safari", "mweb", "tv"];
+
+const isBotCheck = (message) =>
+  /Sign in to confirm|not a bot|confirm your age|429|Too Many Requests/i.test(String(message));
+
+/** Shared flags for every YouTube call. */
+function youtubeArgs(client) {
+  const args = ["--no-warnings", "--no-playlist"];
+
+  // A cookies file lifts the bot check outright. Optional — most installs
+  // never need it, and cookies from a logged-in account used via a datacenter
+  // IP can get that account flagged, so it stays opt-in.
+  if (process.env.YT_COOKIES && fs.existsSync(process.env.YT_COOKIES)) {
+    args.push("--cookies", process.env.YT_COOKIES);
+  }
+  if (client && client !== "default") {
+    args.push("--extractor-args", `youtube:player_client=${client}`);
+  }
+  return args;
+}
+
+const isYouTube = (url) => /(?:youtube\.com|youtu\.be)/i.test(String(url));
+
 function run(args, { timeout = 180_000 } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -48,6 +78,34 @@ function run(args, { timeout = 180_000 } = {}) {
   });
 }
 
+/**
+ * Run a yt-dlp operation, retrying across player clients when YouTube throws a
+ * bot check. Non-YouTube URLs and non-bot-check errors fail on the first try —
+ * retrying those would just be slow.
+ */
+async function withClientFallback(url, operation) {
+  if (!isYouTube(url)) return operation(null);
+
+  let lastError;
+  for (const client of YT_CLIENTS) {
+    try {
+      return await operation(client);
+    } catch (err) {
+      lastError = err;
+      if (!isBotCheck(err.message)) throw err;
+      console.log(`  ↳ youtube blocked the "${client}" client, trying the next one`);
+    }
+  }
+
+  throw new Error(
+    "YouTube is blocking this server — it asked to \"confirm you're not a bot\".\n\n" +
+      "This happens because the bot runs in a datacentre, and YouTube treats " +
+      "those addresses as suspicious. Every player client was refused.\n\n" +
+      "_Usually temporary — try again in a few minutes. If it keeps happening, " +
+      "the owner can supply a cookies file via the YT_COOKIES variable._"
+  );
+}
+
 async function available() {
   try {
     await run(["--version"], { timeout: 10_000 });
@@ -59,7 +117,9 @@ async function available() {
 
 /** Metadata only — title, duration, thumbnail, uploader. */
 async function info(url) {
-  const raw = await run(["-J", "--no-warnings", "--no-playlist", url], { timeout: 60_000 });
+  const raw = await withClientFallback(url, (client) =>
+    run(["-J", ...youtubeArgs(client), url], { timeout: 60_000 })
+  );
   const data = JSON.parse(raw);
   return {
     id: data.id,
@@ -75,9 +135,8 @@ async function info(url) {
 
 /** YouTube search — returns lightweight results for `.yts` / `.play`. */
 async function search(query, limit = 5) {
-  const raw = await run(
-    ["-J", "--no-warnings", "--flat-playlist", `ytsearch${limit}:${query}`],
-    { timeout: 60_000 }
+  const raw = await withClientFallback("https://youtube.com/", (client) =>
+    run(["-J", "--flat-playlist", ...youtubeArgs(client), `ytsearch${limit}:${query}`], { timeout: 60_000 })
   );
   const data = JSON.parse(raw);
   return (data.entries || []).map((e) => ({
@@ -114,13 +173,15 @@ async function readOnlyFile(dir) {
 async function audio(url) {
   const meta = await info(url);
   const file = await withTempDir(async (dir) => {
-    await run([
-      "-f", "bestaudio/best",
-      "-x", "--audio-format", "mp3", "--audio-quality", "128K",
-      "--no-playlist", "--no-warnings",
-      "-o", path.join(dir, "%(title).80s.%(ext)s"),
-      url,
-    ]);
+    await withClientFallback(url, (client) =>
+      run([
+        "-f", "bestaudio/best",
+        "-x", "--audio-format", "mp3", "--audio-quality", "128K",
+        ...youtubeArgs(client),
+        "-o", path.join(dir, "%(title).80s.%(ext)s"),
+        url,
+      ])
+    );
     return readOnlyFile(dir);
   });
   return { ...file, meta };
@@ -130,13 +191,15 @@ async function audio(url) {
 async function video(url, maxHeight = 480) {
   const meta = await info(url);
   const file = await withTempDir(async (dir) => {
-    await run([
-      "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}]/best`,
-      "--merge-output-format", "mp4",
-      "--no-playlist", "--no-warnings",
-      "-o", path.join(dir, "%(title).80s.%(ext)s"),
-      url,
-    ]);
+    await withClientFallback(url, (client) =>
+      run([
+        "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}]/best`,
+        "--merge-output-format", "mp4",
+        ...youtubeArgs(client),
+        "-o", path.join(dir, "%(title).80s.%(ext)s"),
+        url,
+      ])
+    );
     return readOnlyFile(dir);
   });
   return { ...file, meta };
