@@ -26,7 +26,7 @@ Download this repo, open **`config.js`**, and paste the ID between the quotes:
 const SESSION_ID = "David~eyJub2lzZUtleSI6...";
 ```
 
-It's a long string — around 2,500 characters. Copy the whole thing; a partial
+It's a long string — a few thousand characters. Copy the whole thing; a partial
 paste is the single most common setup problem, and the bot will tell you if that
 happened.
 
@@ -181,7 +181,7 @@ Make the bot an **admin** and it can moderate:
 between the quotes.
 
 **"SESSION ID LOOKS TOO SHORT"** — the paste got cut off. Copy the whole message
-again; it's ~2,500 characters.
+again; it's a few thousand characters.
 
 **"LOGGED OUT"** — the session was unlinked. On your phone, remove the device
 under Linked Devices, then generate a fresh session ID.

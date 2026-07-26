@@ -56,7 +56,7 @@ function restoreSession() {
       "",
       "  SESSION ID LOOKS TOO SHORT",
       "",
-      `  Got ${raw.length} characters — a real one is around 2500.`,
+      `  Got ${raw.length} characters — a real one is a few thousand.`,
       "",
       "  You probably copied only part of it. Go back to the message",
       "  on WhatsApp, long-press it, Copy, and paste the WHOLE thing",
