@@ -42,8 +42,18 @@ const MAX_BYTES = 48 * 1024 * 1024;
  */
 const YT_CLIENTS = ["default", "tv_simply", "web_safari", "mweb", "tv"];
 
-const isBotCheck = (message) =>
-  /Sign in to confirm|not a bot|confirm your age|429|Too Many Requests/i.test(String(message));
+/**
+ * Errors worth retrying on a different player client.
+ *
+ * Bot checks are the obvious ones, but a 403 on a format URL is just as
+ * client-specific — the formats one client hands out can be refused while
+ * another's work, and it's often transient. Treating those as fatal meant a
+ * single bad roll failed the whole command.
+ */
+const isRetryable = (message) =>
+  /Sign in to confirm|not a bot|confirm your age|429|Too Many Requests|HTTP Error 403|Forbidden|unable to download video data|fragment.*not found/i.test(
+    String(message)
+  );
 
 /** Shared flags for every YouTube call. */
 function youtubeArgs(client) {
@@ -103,21 +113,32 @@ function run(args, { timeout = 180_000 } = {}) {
 }
 
 /**
- * Run a yt-dlp operation, retrying across player clients when YouTube throws a
- * bot check. Non-YouTube URLs and non-bot-check errors fail on the first try —
- * retrying those would just be slow.
+ * Run a yt-dlp operation, retrying on a different player client when YouTube
+ * refuses. Non-YouTube URLs, and errors that a different client won't fix,
+ * fail on the first try — retrying those would only be slow.
+ *
+ * Whichever client last succeeded is tried first next time; without that, every
+ * call re-walks the list from the top and one blocked client taxes every
+ * request for the life of the process.
  */
+let preferredClient = null;
+
 async function withClientFallback(url, operation) {
   if (!isYouTube(url)) return operation(null);
 
-  let lastError;
-  for (const client of YT_CLIENTS) {
+  const order = preferredClient
+    ? [preferredClient, ...YT_CLIENTS.filter((c) => c !== preferredClient)]
+    : YT_CLIENTS;
+
+  for (const client of order) {
     try {
-      return await operation(client);
+      const result = await operation(client);
+      preferredClient = client;
+      return result;
     } catch (err) {
-      lastError = err;
-      if (!isBotCheck(err.message)) throw err;
-      console.log(`  ↳ youtube blocked the "${client}" client, trying the next one`);
+      if (!isRetryable(err.message)) throw err;
+      if (preferredClient === client) preferredClient = null;
+      console.log(`  ↳ "${client}" client failed (${err.message.split("\n")[0].slice(0, 60)}) — trying the next`);
     }
   }
 
@@ -193,40 +214,67 @@ async function readOnlyFile(dir) {
   return { buffer: await fs.promises.readFile(file), name: files[0], size: stat.size };
 }
 
+/** Shape the metadata yt-dlp prints into what callers expect. */
+const shapeMeta = (data, url) => ({
+  id: data?.id,
+  title: data?.title || "Unknown",
+  uploader: data?.uploader || data?.channel || "Unknown",
+  duration: data?.duration || 0,
+  thumbnail: data?.thumbnail || null,
+  url: data?.webpage_url || url,
+  views: data?.view_count || 0,
+  description: data?.description || "",
+});
+
+/**
+ * Download, and take the metadata from the same invocation.
+ *
+ * Fetching metadata separately first meant two network round trips per
+ * command, and — once the bot-check retry existed — two full client walks.
+ * --print-json emits the info JSON alongside the download, so one call does
+ * both.
+ */
+async function fetchMedia(url, buildArgs) {
+  return withTempDir(async (dir) => {
+    const stdout = await withClientFallback(url, (client) =>
+      run([...buildArgs(dir, client), "--print-json", url])
+    );
+
+    let meta = {};
+    // --print-json emits one JSON object per download; progress lines can be
+    // interleaved, so take the last line that actually parses.
+    for (const line of String(stdout).split("\n").reverse()) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("{")) continue;
+      try {
+        meta = JSON.parse(trimmed);
+        break;
+      } catch {}
+    }
+
+    const file = await readOnlyFile(dir);
+    return { ...file, meta: shapeMeta(meta, url) };
+  });
+}
+
 /** Audio as mp3, for `.song` / `.yta` / `.mp3` / `.spotify`. */
 async function audio(url) {
-  const meta = await info(url);
-  const file = await withTempDir(async (dir) => {
-    await withClientFallback(url, (client) =>
-      run([
-        "-f", "bestaudio/best",
-        "-x", "--audio-format", "mp3", "--audio-quality", "128K",
-        ...youtubeArgs(client),
-        "-o", path.join(dir, "%(title).80s.%(ext)s"),
-        url,
-      ])
-    );
-    return readOnlyFile(dir);
-  });
-  return { ...file, meta };
+  return fetchMedia(url, (dir, client) => [
+    "-f", "bestaudio/best",
+    "-x", "--audio-format", "mp3", "--audio-quality", "128K",
+    ...youtubeArgs(client),
+    "-o", path.join(dir, "%(title).80s.%(ext)s"),
+  ]);
 }
 
 /** Video as mp4, height-capped so the result stays sendable. */
 async function video(url, maxHeight = 480) {
-  const meta = await info(url);
-  const file = await withTempDir(async (dir) => {
-    await withClientFallback(url, (client) =>
-      run([
-        "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}]/best`,
-        "--merge-output-format", "mp4",
-        ...youtubeArgs(client),
-        "-o", path.join(dir, "%(title).80s.%(ext)s"),
-        url,
-      ])
-    );
-    return readOnlyFile(dir);
-  });
-  return { ...file, meta };
+  return fetchMedia(url, (dir, client) => [
+    "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}]/best`,
+    "--merge-output-format", "mp4",
+    ...youtubeArgs(client),
+    "-o", path.join(dir, "%(title).80s.%(ext)s"),
+  ]);
 }
 
 /** Images or videos from a social post — Instagram, TikTok, Facebook, Pinterest. */
