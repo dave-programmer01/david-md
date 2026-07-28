@@ -153,6 +153,7 @@ async function startBot() {
       await rehydrateSchedules(sock);
       startAutoMute(sock);
       startHeartbeat();
+      require("./src/utils/ytcheck").reportYouTubeSupport().catch(() => {});
       console.log("👂 Listening…\n");
     }
 

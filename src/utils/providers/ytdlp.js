@@ -159,12 +159,21 @@ async function withClientFallback(url, operation) {
     }
   }
 
+  // Whether the Proof-of-Origin provider is even present changes the advice
+  // entirely: no provider means the fix is a rebuild, not "wait a while".
+  const hasPot = process.env.BGUTIL_POT_SCRIPT && fs.existsSync(process.env.BGUTIL_POT_SCRIPT);
+
   throw new Error(
     "YouTube is blocking this server — it asked to \"confirm you're not a bot\".\n\n" +
-      "This happens because the bot runs in a datacentre, and YouTube treats " +
-      "those addresses as suspicious. Every player client was refused.\n\n" +
-      "_Usually temporary — try again in a few minutes. If it keeps happening, " +
-      "the owner can supply a cookies file via the YT_COOKIES variable._"
+      (hasPot
+        ? "Even with a Proof-of-Origin token, YouTube refused every player client. " +
+          "This is usually temporary from a busy datacentre address — try again in a " +
+          "few minutes. If it persists, the owner can supply a cookies file via the " +
+          "YT_COOKIES variable."
+        : "This deploy has *no Proof-of-Origin provider*, which is what defeats this " +
+          "block on a datacentre IP. The owner needs to *rebuild the Docker image* — a " +
+          "plain restart won't pick it up. See the bot's startup log: it prints " +
+          "whether the bypass is present.")
   );
 }
 
