@@ -20,7 +20,7 @@ const PERMISSIONS = new Set(["public", "group", "admin", "botAdmin", "owner", "s
 const MENU_ORDER = [
   // General
   "setvar", "getvar", "delvar", "setenv", "delsudo", "afk", "autodl", "chatbot",
-  "ai", "info", "list", "alive", "setalive", "games", "gif", "rotate", "flip",
+  "ai", "info", "list", "alive", "setalive", "games", "wcg", "gif", "rotate", "flip",
   "mention", "reload", "reboot", "delete",
   // Owner
   "allvar", "settings", "setsudo", "getsudo", "callreject", "install", "plugin",

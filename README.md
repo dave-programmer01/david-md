@@ -1,6 +1,6 @@
 # David-MD
 
-A multi-purpose WhatsApp bot with **165 commands** — stickers, group moderation,
+A multi-purpose WhatsApp bot with **166 commands** — stickers, group moderation,
 downloads, media editing and more. Deploy your own copy in a couple of minutes.
 
 ---
@@ -225,7 +225,7 @@ command works without one.
 ## Development
 
 ```bash
-npm run check     # loads all 165 commands, validates the registry, renders the menu
+npm run check     # loads all 166 commands, validates the registry, renders the menu
 ```
 
 Commands live in `src/commands/<category>/`. A file exports one command or an

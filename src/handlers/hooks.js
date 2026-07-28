@@ -170,6 +170,34 @@ async function antibot(sock, m, g) {
   return enforce(sock, m, "kick", "bots are not allowed here");
 }
 
+/**
+ * Word Chain Game input: a `join` during the lobby, or the current player's
+ * answer during a turn. Runs before the anti-* hooks so a perfectly good game
+ * word can't be caught by anti-word, and consumes the message so it isn't also
+ * routed as a command or an AFK trigger.
+ */
+async function wcgInput(sock, m) {
+  const wcg = require("../utils/wcg");
+  if (!wcg.games.has(m.chat)) return false;
+
+  const body = (m.body || "").trim();
+
+  if (wcg.isJoinable(m.chat) && /^join$/i.test(body)) {
+    const result = wcg.addPlayer(m.chat, m.sender, m.pushName || m.sender.split("@")[0]);
+    if (result && !result.already) {
+      await sock.sendMessage(m.chat, {
+        text: `✅ @${m.sender.split("@")[0].split(":")[0]} joined (${result.count} in).`,
+        mentions: [m.sender],
+      });
+    }
+    return true;
+  }
+
+  // submitAnswer only consumes the message when it's actually this player's
+  // turn; everyone else's chatter passes straight through.
+  return wcg.submitAnswer(m.chat, m);
+}
+
 /** A sticker bound with `.stickcmd` acts as a shortcut for that command. */
 async function stickerCommand(sock, m) {
   if (m.type !== "stickerMessage") return false;
@@ -261,6 +289,7 @@ async function run(sock, m) {
   const { maybeHandleRevoke } = require("./antidelete");
   if (await maybeHandleRevoke(sock, m)) return true;
 
+  if (await wcgInput(sock, m)) return true;
   if (await stickerCommand(sock, m)) return true;
   if (await stickerWindow(sock, m)) return true;
 

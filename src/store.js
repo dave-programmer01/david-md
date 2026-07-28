@@ -39,6 +39,9 @@ module.exports = {
   // In-flight games keyed by chat (`.games`).
   games: new Map(),
 
+  // Word Chain Game state keyed by chat (`.wcg`).
+  wcg: new Map(),
+
   // Timers for `.schedule`, rehydrated from the DB at boot.
   scheduleTimers: new Map(),
 };
