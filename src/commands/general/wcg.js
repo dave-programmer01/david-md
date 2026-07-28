@@ -19,11 +19,13 @@ module.exports = {
     if (!["easy", "hard"].includes(arg)) {
       return ctx.reply(
         `🎮 *Word Chain Game*\n\n` +
-          `Take turns giving real words that start with a given letter, before the clock runs out. ` +
-          `Each word chains off the last letter of the one before it. Last one standing wins.\n\n` +
+          `On your turn I ask for a word of an exact length starting with a given letter — ` +
+          `spell it before the clock runs out. Keep trying until then; only running out of ` +
+          `time gets you out. Each word chains off the last letter of the one before it, and ` +
+          `the words get longer and the clock shorter as you go. Last one standing wins.\n\n` +
           `*Start a game*\n` +
-          `${ctx.prefix}wcg easy  — more time, retry until the clock runs out\n` +
-          `${ctx.prefix}wcg hard  — less time, one wrong word and you're out\n\n` +
+          `${ctx.prefix}wcg easy  — more time, shorter words\n` +
+          `${ctx.prefix}wcg hard  — less time, longer words\n\n` +
           `Everyone else has *30 seconds* to type *join*.`
       );
     }

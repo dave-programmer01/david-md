@@ -1,24 +1,30 @@
 const store = require("../store");
 const { sameUser, numberOf } = require("../lib/ctx");
 
-// 275k words, loaded once into a Set for O(1) validation. ~30MB resident, paid
-// only if someone actually plays — require() is lazy at module load but the
-// Set build happens on first game.
-let DICTIONARY = null;
-function dictionary() {
-  if (!DICTIONARY) DICTIONARY = new Set(require("an-array-of-english-words"));
-  return DICTIONARY;
+// 275k words, loaded once into a Set for O(1) validation, plus an index of the
+// (first-letter, length) combinations that actually exist so the bot only ever
+// asks for a length it's possible to answer. Built on first game — the ~30MB is
+// only paid if someone plays.
+let DICT = null;
+let COMBOS = null;
+function load() {
+  if (DICT) return;
+  const words = require("an-array-of-english-words");
+  DICT = new Set(words);
+  COMBOS = new Set();
+  for (const w of words) if (/^[a-z]+$/.test(w)) COMBOS.add(`${w[0]}:${w.length}`);
 }
+const feasible = (letter, len) => COMBOS.has(`${letter}:${len}`);
 
 /**
- * Difficulty is more than a timer. Easy lets you retry a wrong word until your
- * clock runs out and never raises the minimum length; hard eliminates you on
- * the first wrong answer and demands longer words as the game wears on. Both
- * shrink the clock each round, hard faster and to a lower floor.
+ * Difficulty is time and word length — nothing else. Both modes let you keep
+ * trying until your clock runs out; only running out of time gets you out.
+ * Easy gives more time and asks for shorter words that grow slowly; hard gives
+ * less time and asks for longer words that grow faster.
  */
 const MODES = {
-  easy: { joinMs: 30_000, startMs: 45_000, shrinkMs: 3_000, floorMs: 15_000, minLen: 3, ramp: false, strict: false },
-  hard: { joinMs: 30_000, startMs: 28_000, shrinkMs: 4_000, floorMs: 8_000, minLen: 4, ramp: true, strict: true },
+  easy: { joinMs: 30_000, startMs: 45_000, shrinkMs: 3_000, floorMs: 15_000, lenBase: 3, lenEvery: 4, lenCap: 6 },
+  hard: { joinMs: 30_000, startMs: 28_000, shrinkMs: 4_000, floorMs: 8_000, lenBase: 4, lenEvery: 2, lenCap: 8 },
 };
 
 // Avoid opening on letters almost nothing starts with.
@@ -29,10 +35,27 @@ const games = store.wcg; // Map<chatJid, game>
 const send = (chat, content) => store.sock?.sendMessage(chat, content).catch(() => {});
 const clean = (text) => String(text || "").trim().toLowerCase().replace(/[^a-z]/g, "");
 const alive = (game) => game.players.filter((p) => !p.out);
-const minLenFor = (game) => (game.mode.ramp ? Math.min(7, game.mode.minLen + Math.floor(game.accepted / 5)) : game.mode.minLen);
 
 function timeLimit(game) {
   return Math.max(game.mode.floorMs, game.mode.startMs - game.round * game.mode.shrinkMs);
+}
+
+/**
+ * The exact length this turn demands, given the difficulty ramp and the current
+ * letter. Targets base + (rounds/lenEvery), then snaps to the nearest length
+ * that actually has words for this letter, so a turn is never impossible.
+ */
+function requiredLength(game) {
+  const m = game.mode;
+  const target = Math.min(m.lenCap, m.lenBase + Math.floor(game.round / m.lenEvery));
+  if (feasible(game.letter, target)) return target;
+
+  // Walk outward from the target to the nearest solvable length.
+  for (let delta = 1; delta <= 8; delta++) {
+    if (target - delta >= 3 && feasible(game.letter, target - delta)) return target - delta;
+    if (target + delta <= 12 && feasible(game.letter, target + delta)) return target + delta;
+  }
+  return Math.max(3, target); // extremely unlikely; validation still guards it
 }
 
 function clearTimers(game) {
@@ -44,6 +67,7 @@ function clearTimers(game) {
 // ── Lobby ──────────────────────────────────────────────────────────────────
 
 function startLobby(chat, host, hostName, difficulty) {
+  load();
   if (games.has(chat)) return { error: "A word game is already running in this chat." };
 
   const mode = MODES[difficulty];
@@ -57,6 +81,7 @@ function startLobby(chat, host, hostName, difficulty) {
     players: [{ jid: host, name: hostName, out: false }],
     used: new Set(),
     letter: START_LETTERS[Math.floor(Math.random() * START_LETTERS.length)],
+    len: mode.lenBase,
     turn: 0,
     round: 0,
     accepted: 0,
@@ -99,11 +124,11 @@ function beginPlay(chat) {
       `🎮 *Word Chain — ${game.difficulty.toUpperCase()}*\n\n` +
       `${game.players.length} players:\n` +
       game.players.map((p) => `• ${p.name}`).join("\n") +
-      `\n\n*Rules*\n` +
-      `When it's your turn, reply with a real word starting with the given letter, before time runs out.\n` +
-      (game.mode.strict
-        ? `_Hard: one wrong word and you're out, and the words get longer as you go._`
-        : `_Easy: keep trying until your time runs out._`),
+      `\n\n*How it works*\n` +
+      `On your turn I'll ask for a word of an exact length, starting with a given letter. ` +
+      `Send it before the clock runs out — keep trying as many times as you like until then. ` +
+      `Run out of time and you're out.\n` +
+      `Each word chains off the last letter of the one before it. Last player standing wins.`,
   });
 
   setTimeout(() => nextTurn(chat), 2500);
@@ -123,18 +148,17 @@ function nextTurn(chat) {
   } while (game.players[game.turn].out);
 
   game.round += 1;
+  game.len = requiredLength(game);
   const player = game.players[game.turn];
   const limit = timeLimit(game);
-  const minLen = minLenFor(game);
 
   game.turnTimer = setTimeout(() => onTimeout(chat), limit);
 
   send(chat, {
     text:
       `🔤 @${numberOf(player.jid)} — your turn!\n\n` +
-      `Give a word starting with *${game.letter.toUpperCase()}*` +
-      (minLen > 3 ? ` (at least *${minLen}* letters)` : "") +
-      `\n⏱️ *${Math.round(limit / 1000)}s*`,
+      `Spell a *${game.len}-letter* word starting with *${game.letter.toUpperCase()}*.\n` +
+      `⏱️ *${Math.round(limit / 1000)}s*`,
     mentions: [player.jid],
   });
 }
@@ -151,8 +175,9 @@ function onTimeout(chat) {
 
 /**
  * A message from the player whose turn it is. Returns true if it was consumed
- * as a game answer, so the router doesn't also treat it as a command or let
- * the anti-word hook flag a perfectly good word.
+ * as a game answer, so the router doesn't also treat it as a command and the
+ * anti-word hook doesn't flag a perfectly good word. A wrong answer is
+ * corrected but never eliminates — only the clock does.
  */
 function submitAnswer(chat, m) {
   const game = games.get(chat);
@@ -163,39 +188,13 @@ function submitAnswer(chat, m) {
   if (!sameUser(m.senderIds || [m.sender], [player.jid])) return false; // not their turn
 
   const word = clean(m.body);
-  const minLen = minLenFor(game);
-  const eliminate = (reason) => {
-    clearTimeout(game.turnTimer);
-    player.out = true;
-    send(chat, { text: `❌ @${numberOf(player.jid)} — ${reason} You're out.`, mentions: [player.jid] });
-    nextTurn(chat);
-  };
-  const reject = (reason) => {
-    // Easy mode: correct them but let the clock keep running so they can retry.
-    if (game.mode.strict) return eliminate(reason);
-    send(chat, { text: `🚫 ${reason} Try again.` });
-  };
+  const retry = (reason) => send(chat, { text: `🚫 ${reason} Try again.` });
 
-  if (!word) {
-    reject("That's not a word.");
-    return true;
-  }
-  if (!word.startsWith(game.letter)) {
-    reject(`It has to start with *${game.letter.toUpperCase()}*.`);
-    return true;
-  }
-  if (word.length < minLen) {
-    reject(`Too short — needs at least *${minLen}* letters.`);
-    return true;
-  }
-  if (game.used.has(word)) {
-    reject(`*${word}* has already been used.`);
-    return true;
-  }
-  if (!dictionary().has(word)) {
-    reject(`*${word}* isn't a word.`);
-    return true;
-  }
+  if (!word) return void retry("That's not a word."), true;
+  if (!word.startsWith(game.letter)) return void retry(`It has to start with *${game.letter.toUpperCase()}*.`), true;
+  if (word.length !== game.len) return void retry(`It has to be exactly *${game.len}* letters — *${word}* has ${word.length}.`), true;
+  if (game.used.has(word)) return void retry(`*${word}* has already been used.`), true;
+  if (!DICT.has(word)) return void retry(`*${word}* isn't a word.`), true;
 
   // Accepted — chain onward from its last letter.
   clearTimeout(game.turnTimer);
@@ -203,23 +202,20 @@ function submitAnswer(chat, m) {
   game.accepted += 1;
   game.letter = word[word.length - 1];
 
-  send(chat, { text: `✅ *${word}* — nice.`, mentions: [] });
+  send(chat, { text: `✅ *${word}* — nice.` });
   nextTurn(chat);
   return true;
 }
 
 function endGame(chat, winner) {
   const game = games.get(chat);
+  const total = game?.accepted || 0;
   if (game) clearTimers(game);
   games.delete(chat);
 
-  if (!winner) {
-    return send(chat, { text: "🏁 Game over — nobody's left standing." });
-  }
+  if (!winner) return send(chat, { text: "🏁 Game over — nobody's left standing." });
   return send(chat, {
-    text:
-      `🏆 *${winner.name}* wins!\n\n` +
-      `@${numberOf(winner.jid)} outlasted everyone over ${game?.accepted || 0} word(s).`,
+    text: `🏆 *${winner.name}* wins!\n\n@${numberOf(winner.jid)} outlasted everyone over ${total} word(s).`,
     mentions: [winner.jid],
   });
 }
