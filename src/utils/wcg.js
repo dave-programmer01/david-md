@@ -28,12 +28,18 @@ const feasible = (letter, len) => COMBOS.has(`${letter}:${len}`);
 /**
  * Difficulty is time and word length — nothing else. Both modes let you keep
  * trying until your clock runs out; only running out of time gets you out.
- * Easy gives more time and asks for shorter words that grow slowly; hard gives
- * less time and asks for longer words that grow faster.
+ *
+ * The clock and the word length step **once per full round** — after everyone
+ * still in has had a turn — not once per turn. Shrinking every turn made even a
+ * two-player game collapse in seconds; per-round keeps it going. Everyone in the
+ * same round faces the same time and length, which is also fairer than a later
+ * seat drawing a harder word than an earlier one in the same round.
+ *
+ * shrinkMs / lenEvery are therefore *per round*, not per turn.
  */
 const MODES = {
-  easy: { joinMs: 30_000, startMs: 45_000, shrinkMs: 3_000, floorMs: 15_000, lenBase: 3, lenEvery: 4, lenCap: 6 },
-  hard: { joinMs: 30_000, startMs: 28_000, shrinkMs: 4_000, floorMs: 8_000, lenBase: 4, lenEvery: 2, lenCap: 8 },
+  easy: { joinMs: 30_000, startMs: 60_000, shrinkMs: 2_000, floorMs: 25_000, lenBase: 3, lenEvery: 3, lenCap: 6 },
+  hard: { joinMs: 30_000, startMs: 40_000, shrinkMs: 2_000, floorMs: 10_000, lenBase: 4, lenEvery: 2, lenCap: 8 },
 };
 
 // Avoid opening on letters almost nothing starts with.
@@ -46,7 +52,8 @@ const clean = (text) => String(text || "").trim().toLowerCase().replace(/[^a-z]/
 const alive = (game) => game.players.filter((p) => !p.out);
 
 function timeLimit(game) {
-  return Math.max(game.mode.floorMs, game.mode.startMs - game.round * game.mode.shrinkMs);
+  // game.cycle counts completed rounds, so time steps once per round.
+  return Math.max(game.mode.floorMs, game.mode.startMs - game.cycle * game.mode.shrinkMs);
 }
 
 /**
@@ -56,7 +63,7 @@ function timeLimit(game) {
  */
 function requiredLength(game) {
   const m = game.mode;
-  const target = Math.min(m.lenCap, m.lenBase + Math.floor(game.round / m.lenEvery));
+  const target = Math.min(m.lenCap, m.lenBase + Math.floor(game.cycle / m.lenEvery));
   if (feasible(game.letter, target)) return target;
 
   // Walk outward from the target to the nearest solvable length.
@@ -92,7 +99,7 @@ function startLobby(chat, host, hostName, difficulty) {
     letter: START_LETTERS[Math.floor(Math.random() * START_LETTERS.length)],
     len: mode.lenBase,
     turn: 0,
-    round: 0,
+    cycle: 0, // completed full rounds — drives both the clock and word length
     accepted: 0,
     joinTimer: null,
     turnTimer: null,
@@ -151,12 +158,15 @@ function nextTurn(chat) {
   const remaining = alive(game);
   if (remaining.length <= 1) return endGame(chat, remaining[0]);
 
-  // Advance round-robin to the next player who isn't out.
+  // Advance round-robin to the next player who isn't out. When the index wraps
+  // past the end of the list back to an earlier seat, a full round has elapsed
+  // — that's when the clock and word length step, not on every turn.
+  const prev = game.turn;
   do {
     game.turn = (game.turn + 1) % game.players.length;
   } while (game.players[game.turn].out);
+  if (game.turn <= prev) game.cycle += 1;
 
-  game.round += 1;
   game.len = requiredLength(game);
   const player = game.players[game.turn];
   const limit = timeLimit(game);
