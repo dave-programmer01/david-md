@@ -38,7 +38,10 @@ function isSignalNoise(args) {
 
 function setupLogger() {
   if (process.env.DEBUG_SIGNAL === "1") return;
-  for (const method of ["log", "error", "warn"]) {
+  // libsignal's session-ratchet noise goes through console.info specifically
+  // ("Closing session:", the SessionEntry dump) — a distinct function from
+  // console.log, so it has to be patched by name too.
+  for (const method of ["log", "info", "error", "warn"]) {
     const original = console[method].bind(console);
     console[method] = (...args) => {
       if (isSignalNoise(args)) return;
