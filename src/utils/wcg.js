@@ -1,12 +1,13 @@
 const store = require("../store");
 const { sameUser, numberOf } = require("../lib/ctx");
 
-// 275k words, loaded once into a Set for O(1) validation, plus an index of the
-// (first-letter, length) combinations that actually exist so the bot only ever
-// asks for a length it's possible to answer. Built on first game — the ~30MB is
-// only paid if someone plays.
+// 275k words, loaded once into a Set for O(1) validation, plus the longest word
+// available for each starting letter. The length the bot asks for is a MINIMUM,
+// so a turn is answerable as long as the letter has some word at least that
+// long — MAXLEN tells us that. Built on first game — the ~30MB is only paid if
+// someone plays.
 let DICT = null;
-let COMBOS = null;
+let MAXLEN = null;
 function load() {
   if (DICT) return;
   let words;
@@ -20,10 +21,13 @@ function load() {
     );
   }
   DICT = new Set(words);
-  COMBOS = new Set();
-  for (const w of words) if (/^[a-z]+$/.test(w)) COMBOS.add(`${w[0]}:${w.length}`);
+  MAXLEN = {};
+  for (const w of words) {
+    if (!/^[a-z]+$/.test(w)) continue;
+    const c = w[0];
+    if (!MAXLEN[c] || w.length > MAXLEN[c]) MAXLEN[c] = w.length;
+  }
 }
-const feasible = (letter, len) => COMBOS.has(`${letter}:${len}`);
 
 /**
  * Difficulty is time and word length — nothing else. Both modes let you keep
@@ -57,21 +61,16 @@ function timeLimit(game) {
 }
 
 /**
- * The exact length this turn demands, given the difficulty ramp and the current
- * letter. Targets base + (rounds/lenEvery), then snaps to the nearest length
- * that actually has words for this letter, so a turn is never impossible.
+ * The MINIMUM length this turn demands, from the difficulty ramp. A longer word
+ * is always fine — "elephant" answers a "3+ letters starting with E". Capped at
+ * the longest word the current letter actually has, so the minimum is never
+ * higher than anything answerable.
  */
 function requiredLength(game) {
   const m = game.mode;
   const target = Math.min(m.lenCap, m.lenBase + Math.floor(game.cycle / m.lenEvery));
-  if (feasible(game.letter, target)) return target;
-
-  // Walk outward from the target to the nearest solvable length.
-  for (let delta = 1; delta <= 8; delta++) {
-    if (target - delta >= 3 && feasible(game.letter, target - delta)) return target - delta;
-    if (target + delta <= 12 && feasible(game.letter, target + delta)) return target + delta;
-  }
-  return Math.max(3, target); // extremely unlikely; validation still guards it
+  const max = MAXLEN[game.letter] || 3;
+  return Math.min(target, max);
 }
 
 function clearTimers(game) {
@@ -141,9 +140,9 @@ function beginPlay(chat) {
       `${game.players.length} players:\n` +
       game.players.map((p) => `• ${p.name}`).join("\n") +
       `\n\n*How it works*\n` +
-      `On your turn I'll ask for a word of an exact length, starting with a given letter. ` +
-      `Send it before the clock runs out — keep trying as many times as you like until then. ` +
-      `Run out of time and you're out.\n` +
+      `On your turn I'll give you a letter and a minimum length — send a word that starts ` +
+      `with that letter and is at least that long (longer is fine). Keep trying as many ` +
+      `times as you like before the clock runs out. Run out of time and you're out.\n` +
       `Each word chains off the last letter of the one before it. Last player standing wins.`,
   });
 
@@ -176,7 +175,8 @@ function nextTurn(chat) {
   send(chat, {
     text:
       `🔤 @${numberOf(player.jid)} — your turn!\n\n` +
-      `Spell a *${game.len}-letter* word starting with *${game.letter.toUpperCase()}*.\n` +
+      `Give a word starting with *${game.letter.toUpperCase()}*, ` +
+      `at least *${game.len}* letters long.\n` +
       `⏱️ *${Math.round(limit / 1000)}s*`,
     mentions: [player.jid],
   });
@@ -211,7 +211,7 @@ function submitAnswer(chat, m) {
 
   if (!word) return void retry("That's not a word."), true;
   if (!word.startsWith(game.letter)) return void retry(`It has to start with *${game.letter.toUpperCase()}*.`), true;
-  if (word.length !== game.len) return void retry(`It has to be exactly *${game.len}* letters — *${word}* has ${word.length}.`), true;
+  if (word.length < game.len) return void retry(`Too short — needs at least *${game.len}* letters, *${word}* has ${word.length}.`), true;
   if (game.used.has(word)) return void retry(`*${word}* has already been used.`), true;
   if (!DICT.has(word)) return void retry(`*${word}* isn't a word.`), true;
 
