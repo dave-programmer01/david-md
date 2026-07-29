@@ -9,7 +9,16 @@ let DICT = null;
 let COMBOS = null;
 function load() {
   if (DICT) return;
-  const words = require("an-array-of-english-words");
+  let words;
+  try {
+    words = require("an-array-of-english-words");
+  } catch {
+    // The one dependency this game needs isn't installed. On a panel that
+    // means the word list was added after the last `npm install`.
+    throw new Error(
+      "The word list isn't installed. Run *npm install* (or rebuild the image) and try again."
+    );
+  }
   DICT = new Set(words);
   COMBOS = new Set();
   for (const w of words) if (/^[a-z]+$/.test(w)) COMBOS.add(`${w[0]}:${w.length}`);
