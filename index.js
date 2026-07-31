@@ -154,6 +154,7 @@ async function startBot() {
       startAutoMute(sock);
       startHeartbeat();
       require("./src/utils/ytcheck").reportYouTubeSupport().catch(() => {});
+      require("./src/utils/ytprobe").probe().catch(() => {});
       console.log("👂 Listening…\n");
     }
 
