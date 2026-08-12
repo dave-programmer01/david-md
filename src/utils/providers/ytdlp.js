@@ -219,6 +219,27 @@ async function search(query, limit = 5) {
   }));
 }
 
+/**
+ * SoundCloud search. Unlike YouTube it isn't bot-checked, so it needs none of
+ * the player-client fallback or PoT machinery — a plain scsearch does it.
+ */
+async function scSearch(query, limit = 5) {
+  const raw = await run(
+    ["-J", "--flat-playlist", "--no-warnings", `scsearch${limit}:${query}`],
+    { timeout: 60_000 }
+  );
+  const data = JSON.parse(raw);
+  return (data.entries || [])
+    .filter((e) => e && e.url)
+    .map((e) => ({
+      id: e.id,
+      title: e.title || "Unknown",
+      uploader: e.uploader || e.channel || "Unknown",
+      duration: e.duration || 0,
+      url: e.url,
+    }));
+}
+
 async function withTempDir(fn) {
   const dir = path.join(os.tmpdir(), `dl-${crypto.randomBytes(6).toString("hex")}`);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -331,4 +352,4 @@ async function media(url) {
   return { files, meta };
 }
 
-module.exports = { run, available, info, search, audio, video, media, MAX_BYTES, BIN };
+module.exports = { run, available, info, search, scSearch, audio, video, media, MAX_BYTES, BIN };

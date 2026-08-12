@@ -30,7 +30,7 @@
 // It is a long string that starts with "David~". Paste the WHOLE thing —
 // it is a few thousand characters, so make sure you copied the very end too.
 
-const SESSION_ID = "PASTE_YOUR_SESSION_ID_HERE";
+const SESSION_ID = ""
 
 // ─── YOUR DETAILS ──────────────────────────────────────────────────────
 

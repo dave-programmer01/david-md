@@ -52,7 +52,7 @@ const MENU_ORDER = [
   "clear", "retry", "pdf", "restart",
   // Download
   "insta", "fb", "story", "pinterest", "tiktok", "song", "yts", "ytv", "video",
-  "yta", "play", "spotify",
+  "yta", "play", "spotify", "soundcloud",
   // Whatsapp
   "react", "edit", "send", "forward",
 ];
