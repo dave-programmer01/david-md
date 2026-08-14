@@ -80,4 +80,8 @@ ENV NODE_ENV=production
 # tini reaps the ffmpeg and yt-dlp child processes; without it they pile up as
 # zombies over a long-running deployment.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "index.js"]
+# Self-heal on every boot: YouTube and TikTok break yt-dlp's extractors every
+# few weeks, and a stale binary is the usual cause of "it worked before". A
+# restart now refreshes it (capped at 30s so a slow GitHub never blocks boot),
+# so users no longer have to rebuild the whole image to fix downloads.
+CMD ["sh", "-c", "timeout 30 yt-dlp -U >/dev/null 2>&1 || true; exec node index.js"]

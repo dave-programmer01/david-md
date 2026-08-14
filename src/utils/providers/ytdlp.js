@@ -317,7 +317,11 @@ async function audio(url) {
 /** Video as mp4, height-capped so the result stays sendable. */
 async function video(url, maxHeight = 480) {
   return fetchMedia(url, (dir, client) => [
-    "-f", `bestvideo[height<=${maxHeight}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${maxHeight}]/best`,
+    // Ends in a plain best/best so a client that only offers non-mp4 or
+    // unlabelled formats still yields something downloadable instead of
+    // "Requested format is not available" — ffmpeg re-containers to mp4.
+    "-f", `bestvideo[height<=${maxHeight}]+bestaudio/best[height<=${maxHeight}]/bestvideo+bestaudio/best`,
+    "-S", "res,vbr",
     "--merge-output-format", "mp4",
     ...youtubeArgs(client),
     "-o", path.join(dir, "%(title).80s.%(ext)s"),
@@ -329,7 +333,13 @@ async function media(url) {
   const meta = await info(url).catch(() => ({ title: "Download", uploader: "", description: "" }));
   const files = await withTempDir(async (dir) => {
     await run([
-      "-f", "best[ext=mp4]/best",
+      // Prefer the highest-resolution, highest-bitrate rendition and merge to
+      // mp4 when video and audio arrive as separate streams. For TikTok this
+      // pulls the full-quality, non-watermarked source rather than the smaller
+      // muxed preview; for photo posts the `b` fallback just grabs the image.
+      "-f", "bv*+ba/b",
+      "-S", "res,vbr,ext:mp4:m4a",
+      "--merge-output-format", "mp4",
       "--no-warnings",
       "-o", path.join(dir, "%(autonumber)s.%(ext)s"),
       url,

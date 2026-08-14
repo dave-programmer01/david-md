@@ -51,7 +51,21 @@ const START_LETTERS = "abcdefghlmprstw".split("");
 
 const games = store.wcg; // Map<chatJid, game>
 
-const send = (chat, content) => store.sock?.sendMessage(chat, content).catch(() => {});
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// WhatsApp silently throttles rapid consecutive sends, and a dropped turn
+// prompt leaves the game frozen with nobody knowing what to spell. Retry a few
+// times with a short back-off so the prompt reliably lands.
+async function send(chat, content) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!store.sock) return;
+    try {
+      return await store.sock.sendMessage(chat, content);
+    } catch {
+      await wait(500);
+    }
+  }
+}
 const clean = (text) => String(text || "").trim().toLowerCase().replace(/[^a-z]/g, "");
 const alive = (game) => game.players.filter((p) => !p.out);
 
@@ -149,13 +163,13 @@ function beginPlay(chat) {
   setTimeout(() => nextTurn(chat), 2500);
 }
 
-function nextTurn(chat) {
+async function nextTurn(chat, lead = "") {
   const game = games.get(chat);
   if (!game || game.phase !== "playing") return;
   clearTimers(game);
 
   const remaining = alive(game);
-  if (remaining.length <= 1) return endGame(chat, remaining[0]);
+  if (remaining.length <= 1) return endGame(chat, remaining[0], lead);
 
   // Advance round-robin to the next player who isn't out. When the index wraps
   // past the end of the list back to an earlier seat, a full round has elapsed
@@ -172,8 +186,12 @@ function nextTurn(chat) {
 
   game.turnTimer = setTimeout(() => onTimeout(chat), limit);
 
-  send(chat, {
+  // The acceptance/elimination note (lead) rides along in the SAME message as
+  // the turn prompt, so there's only ever one send per turn — no second message
+  // to be throttled away, and the prompt can never go missing on its own.
+  await send(chat, {
     text:
+      lead +
       `🔤 @${numberOf(player.jid)} — your turn!\n\n` +
       `Give a word starting with *${game.letter.toUpperCase()}*, ` +
       `at least *${game.len}* letters long.\n` +
@@ -188,8 +206,8 @@ function onTimeout(chat) {
 
   const player = game.players[game.turn];
   player.out = true;
-  send(chat, { text: `⏰ Time's up — @${numberOf(player.jid)} is out.`, mentions: [player.jid] });
-  nextTurn(chat);
+  // Fold the elimination into the next prompt so it's one reliable message.
+  nextTurn(chat, `⏰ Time's up — *${player.name}* is out.\n\n`);
 }
 
 /**
@@ -198,7 +216,7 @@ function onTimeout(chat) {
  * anti-word hook doesn't flag a perfectly good word. A wrong answer is
  * corrected but never eliminates — only the clock does.
  */
-function submitAnswer(chat, m) {
+async function submitAnswer(chat, m) {
   const game = games.get(chat);
   if (!game || game.phase !== "playing") return false;
 
@@ -207,34 +225,37 @@ function submitAnswer(chat, m) {
   if (!sameUser(m.senderIds || [m.sender], [player.jid])) return false; // not their turn
 
   const word = clean(m.body);
-  const retry = (reason) => send(chat, { text: `🚫 ${reason} Try again.` });
+  const retry = (reason) => {
+    send(chat, { text: `🚫 ${reason} Try again.` });
+    return true;
+  };
 
-  if (!word) return void retry("That's not a word."), true;
-  if (!word.startsWith(game.letter)) return void retry(`It has to start with *${game.letter.toUpperCase()}*.`), true;
-  if (word.length < game.len) return void retry(`Too short — needs at least *${game.len}* letters, *${word}* has ${word.length}.`), true;
-  if (game.used.has(word)) return void retry(`*${word}* has already been used.`), true;
-  if (!DICT.has(word)) return void retry(`*${word}* isn't a word.`), true;
+  if (!word) return retry("That's not a word.");
+  if (!word.startsWith(game.letter)) return retry(`It has to start with *${game.letter.toUpperCase()}*.`);
+  if (word.length < game.len) return retry(`Too short — needs at least *${game.len}* letters, *${word}* has ${word.length}.`);
+  if (game.used.has(word)) return retry(`*${word}* has already been used.`);
+  if (!DICT.has(word)) return retry(`*${word}* isn't a word.`);
 
-  // Accepted — chain onward from its last letter.
+  // Accepted — chain onward from its last letter. The "nice" note is merged
+  // into the next turn's prompt so both arrive as a single message.
   clearTimeout(game.turnTimer);
   game.used.add(word);
   game.accepted += 1;
   game.letter = word[word.length - 1];
 
-  send(chat, { text: `✅ *${word}* — nice.` });
-  nextTurn(chat);
+  await nextTurn(chat, `✅ *${word}* — nice.\n\n`);
   return true;
 }
 
-function endGame(chat, winner) {
+function endGame(chat, winner, lead = "") {
   const game = games.get(chat);
   const total = game?.accepted || 0;
   if (game) clearTimers(game);
   games.delete(chat);
 
-  if (!winner) return send(chat, { text: "🏁 Game over — nobody's left standing." });
+  if (!winner) return send(chat, { text: `${lead}🏁 Game over — nobody's left standing.` });
   return send(chat, {
-    text: `🏆 *${winner.name}* wins!\n\n@${numberOf(winner.jid)} outlasted everyone over ${total} word(s).`,
+    text: `${lead}🏆 *${winner.name}* wins!\n\n@${numberOf(winner.jid)} outlasted everyone over ${total} word(s).`,
     mentions: [winner.jid],
   });
 }
