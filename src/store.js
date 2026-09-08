@@ -24,6 +24,12 @@ module.exports = {
   recentImages: new Map(),
   activeStickerRequests: new Map(),
 
+  // Ids of messages this process sent. The bot and its owner share one
+  // WhatsApp account, so `fromMe` alone cannot tell "the owner typed this"
+  // from "the bot said this" — and AutoAI has to answer the first while
+  // ignoring the second, or it replies to itself forever.
+  ownMessages: new LRU({ max: 1000, ttl: 30 * 60_000 }),
+
   // Antidelete: recent messages, so a revoked one can be reposted.
   messageCache: new LRU({ max: 800, ttl: 30 * 60_000 }),
 

@@ -80,6 +80,11 @@ async function handleOne(sock, raw) {
   // Keep a copy for antidelete before anything else can touch it.
   store.messageCache.set(m.id, m);
 
+  // Meta AI's thread is `.autoai` plumbing, not a conversation. Its replies go
+  // to whoever asked the question and never reach the router or the passive
+  // hooks — otherwise the bot would sit there chatting with Meta AI on its own.
+  if (require("../utils/providers/metaai").intercept(m)) return;
+
   // Ignore backlog delivered on reconnect — otherwise every command queued
   // while the bot was offline fires at once the moment it returns.
   if (m.timestamp && m.timestamp < store.botStartTimestamp - 60_000) {

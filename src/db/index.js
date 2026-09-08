@@ -54,6 +54,7 @@ const DEFAULTS = {
   antidelete: false,
   autodl: false,
   chatbot: false,
+  autoai: false,
   language: "en",
   aliveText: "",
   aliveMedia: "",

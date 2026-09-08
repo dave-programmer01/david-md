@@ -1,12 +1,15 @@
 const ytdlp = require("../../utils/providers/ytdlp");
+const misc = require("../../utils/providers/misc");
 
 const CATEGORY = "Download";
 
 /**
  * Every social downloader is the same flow with a different link pattern, so
- * they share one factory. yt-dlp does the site-specific work.
+ * they share one factory. yt-dlp does the site-specific work by default; a
+ * command can override `fetcher` when a site needs a different route (TikTok
+ * blocks datacentre IPs, so it goes through a resolver instead).
  */
-function socialCommand({ name, aliases = [], label, pattern, example, desc }) {
+function socialCommand({ name, aliases = [], label, pattern, example, desc, fetcher }) {
   return {
     name,
     aliases,
@@ -22,7 +25,7 @@ function socialCommand({ name, aliases = [], label, pattern, example, desc }) {
 
       await ctx.reply(`⏳ Fetching from ${label}…`);
 
-      const { files, meta } = await ytdlp.media(url);
+      const { files, meta } = await (fetcher ? fetcher(url) : ytdlp.media(url));
       const caption =
         `*${meta.title || label}*` +
         (meta.uploader ? `\n_by ${meta.uploader}_` : "");
@@ -73,6 +76,15 @@ module.exports = [
     desc: "Download a TikTok, no watermark",
     pattern: /https?:\/\/(?:\w+\.)?tiktok\.com\/\S+/i,
     example: "https://tiktok.com/@user/video/123",
+    // The resolver fetches from its own IP (TikTok challenges datacentre IPs on
+    // the web page yt-dlp would scrape). yt-dlp is the fallback if it's down.
+    fetcher: async (url) => {
+      try {
+        return await misc.tiktok(url);
+      } catch {
+        return await ytdlp.media(url);
+      }
+    },
   }),
 
   socialCommand({

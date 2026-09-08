@@ -57,6 +57,7 @@ module.exports = [
         `┃◬│ Anti-delete     : ${all.antidelete || "off ❌"}`,
         `┃◬│ Auto-download   : ${flag(all.autodl)}`,
         `┃◬│ Chatbot         : ${flag(all.chatbot)}`,
+        `┃◬│ AutoAI          : ${flag(all.autoai)}`,
         `┃◬│`,
         `┃◬│ Sticker pack    : ${all.stickerPack}`,
         `┃◬│ Sticker author  : ${all.stickerAuthor}`,

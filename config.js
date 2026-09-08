@@ -68,6 +68,8 @@ const STICKER_AUTHOR = "David";
 
 // ─── OPTIONAL: AI COMMANDS ─────────────────────────────────────────────
 // Needed only for .ai and .chatbot.  Get a key at console.anthropic.com
+// (.autoai uses Meta AI inside WhatsApp and needs no key — a key just makes
+//  its command-picking smarter.)
 // Leave empty if you don't want them — every other command still works.
 
 const ANTHROPIC_API_KEY = "";

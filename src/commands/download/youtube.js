@@ -32,6 +32,7 @@ const fetchCommand = ({ name, aliases = [], desc, kind }) => ({
   usage: `.${name} <search or YouTube link>`,
   permission: "public",
   execute: async (ctx) => {
+    const query = (ctx.text || ctx.quoted?.text || "").trim();
     const url = await resolve(ctx);
     if (!url) {
       return ctx.reply(
@@ -42,7 +43,25 @@ const fetchCommand = ({ name, aliases = [], desc, kind }) => ({
 
     await ctx.reply(`⏳ Downloading the ${kind === "audio" ? "audio" : "video"}…`);
 
-    const result = kind === "audio" ? await ytdlp.audio(url) : await ytdlp.video(url, 480);
+    let result;
+    try {
+      result = kind === "audio" ? await ytdlp.audio(url) : await ytdlp.video(url, 480);
+    } catch (err) {
+      // YouTube blocks datacentre IPs with a bot check; SoundCloud doesn't. For
+      // an audio *search* (not a bare YouTube link) we can quietly retry there
+      // rather than failing — slowed/remix tracks especially tend to live on
+      // SoundCloud anyway. If SoundCloud has nothing, surface the original
+      // YouTube error, which carries the cookies-file advice.
+      const searchable = kind === "audio" && query && !YT.test(query);
+      if (searchable) {
+        const [sc] = await ytdlp.scSearch(query, 1).catch(() => []);
+        if (sc) {
+          await ctx.reply("🔁 YouTube blocked this server — grabbing it from SoundCloud instead…");
+          result = await ytdlp.audio(sc.url);
+        }
+      }
+      if (!result) throw err;
+    }
     const { meta } = result;
 
     if (kind === "audio") {

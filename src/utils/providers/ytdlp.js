@@ -329,24 +329,60 @@ async function video(url, maxHeight = 480) {
 }
 
 /** Images or videos from a social post — Instagram, TikTok, Facebook, Pinterest. */
+// TikTok's webpage endpoint returns a verification challenge to datacentre IPs
+// — surfacing as "Unexpected response from webpage request". Forcing the mobile
+// API via api_hostname sidesteps the webpage entirely; the hostnames rotate, so
+// a few are tried before falling back to the default path.
+const TIKTOK_API_HOSTS = [
+  "api16-normal-c-useast1a.tiktokv.com",
+  "api22-normal-c-useast2a.tiktokv.com",
+  "api19-normal-c-useast1a.tiktokv.com",
+];
+
 async function media(url) {
   const meta = await info(url).catch(() => ({ title: "Download", uploader: "", description: "" }));
-  const files = await withTempDir(async (dir) => {
-    await run([
-      // Prefer the highest-resolution, highest-bitrate rendition and merge to
-      // mp4 when video and audio arrive as separate streams. For TikTok this
-      // pulls the full-quality, non-watermarked source rather than the smaller
-      // muxed preview; for photo posts the `b` fallback just grabs the image.
+  const isTikTok = /tiktok\.com/i.test(String(url));
+
+  // Prefer the highest-resolution, highest-bitrate rendition and merge to mp4
+  // when video and audio arrive as separate streams. For TikTok this pulls the
+  // full-quality, non-watermarked source rather than the smaller muxed preview;
+  // for photo posts the `b` fallback just grabs the image.
+  const download = (dir, extra = []) =>
+    run([
       "-f", "bv*+ba/b",
       "-S", "res,vbr,ext:mp4:m4a",
       "--merge-output-format", "mp4",
       "--no-warnings",
+      ...extra,
       "-o", path.join(dir, "%(autonumber)s.%(ext)s"),
       url,
     ]);
+
+  const files = await withTempDir(async (dir) => {
+    if (isTikTok) {
+      let lastErr;
+      for (const host of TIKTOK_API_HOSTS) {
+        try {
+          await download(dir, ["--extractor-args", `tiktok:api_hostname=${host}`]);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      // If every API host refused, try the plain webpage path once — it works
+      // when the mobile API itself is having a bad day.
+      if (lastErr) await download(dir).catch(() => { throw lastErr; });
+    } else {
+      await download(dir);
+    }
+
     const names = await fs.promises.readdir(dir);
     const out = [];
     for (const name of names.slice(0, 10)) {
+      // Skip yt-dlp's in-progress and sidecar files — a failed attempt can
+      // leave a .part behind that would otherwise be sent as a broken "image".
+      if (/\.(part|ytdl|temp|json|txt|vtt)$/i.test(name)) continue;
       const full = path.join(dir, name);
       const stat = await fs.promises.stat(full);
       if (stat.size > MAX_BYTES) continue;

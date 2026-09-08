@@ -104,6 +104,15 @@ async function startBot() {
 
   store.sock = sock;
 
+  // Every send goes through here, so this is the one place that knows which
+  // messages are the bot's own. See store.ownMessages for why that matters.
+  const rawSend = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (jid, content, options) => {
+    const sent = await rawSend(jid, content, options);
+    if (sent?.key?.id) store.ownMessages.set(sent.key.id, true);
+    return sent;
+  };
+
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", async (update) => {

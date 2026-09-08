@@ -77,4 +77,51 @@ async function spotifyTrack(url) {
   };
 }
 
-module.exports = { tts, upload, spotifyTrack };
+/**
+ * TikTok blocks datacentre IPs on its own web endpoint, so yt-dlp (which
+ * fetches that page directly) fails from a server with "Unexpected response
+ * from webpage request". This resolver hands the link to tikwm, which does the
+ * fetch from its own IP and returns direct CDN URLs for the no-watermark video
+ * (or the images of a photo post) — the bot just downloads those, which the
+ * CDN serves without a challenge. Returns the same { files, meta } shape as
+ * ytdlp.media so it drops straight into the social command.
+ */
+const MAX_TIKTOK_BYTES = 64 * 1024 * 1024;
+
+async function tiktok(url) {
+  const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`;
+  const res = await fetch(api, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`TikTok resolver failed (${res.status}).`);
+
+  const json = await res.json();
+  if (json.code !== 0 || !json.data) throw new Error(json.msg || "TikTok resolver returned no data.");
+  const d = json.data;
+
+  const abs = (u) => (String(u).startsWith("http") ? u : `https://www.tikwm.com${u}`);
+  const grab = async (u, name, isVideo) => {
+    const r = await fetch(abs(u), { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(120_000) });
+    if (!r.ok) throw new Error(`Media download failed (${r.status}).`);
+    const buffer = Buffer.from(await r.arrayBuffer());
+    if (buffer.length > MAX_TIKTOK_BYTES) throw new Error("That TikTok is too large to send on WhatsApp.");
+    return { buffer, name, isVideo };
+  };
+
+  const meta = {
+    title: d.title || "TikTok",
+    uploader: d.author?.nickname || d.author?.unique_id || "",
+    duration: d.duration || 0,
+  };
+
+  const files = [];
+  if (Array.isArray(d.images) && d.images.length) {
+    // Photo/slideshow post — a set of images rather than a video.
+    for (const [i, img] of d.images.entries()) files.push(await grab(img, `${i + 1}.jpg`, false));
+  } else {
+    const videoUrl = d.hdplay || d.play || d.wmplay;
+    if (!videoUrl) throw new Error("No downloadable media in that TikTok.");
+    files.push(await grab(videoUrl, "tiktok.mp4", true));
+  }
+  return { files, meta };
+}
+
+module.exports = { tts, upload, spotifyTrack, tiktok };

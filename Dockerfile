@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       tini \
-    && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    && curl -fsSL https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
          -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
@@ -84,4 +84,4 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 # few weeks, and a stale binary is the usual cause of "it worked before". A
 # restart now refreshes it (capped at 30s so a slow GitHub never blocks boot),
 # so users no longer have to rebuild the whole image to fix downloads.
-CMD ["sh", "-c", "timeout 30 yt-dlp -U >/dev/null 2>&1 || true; exec node index.js"]
+CMD ["sh", "-c", "timeout 45 yt-dlp --update-to nightly >/dev/null 2>&1 || true; exec node index.js"]

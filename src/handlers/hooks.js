@@ -284,6 +284,58 @@ async function chatbot(sock, m) {
   return false;
 }
 
+// One AutoAI turn at a time per chat.
+const autoAiBusy = new Set();
+
+/**
+ * AutoAI: replying to one of the bot's own messages talks to the assistant,
+ * which can answer or run a command on the sender's behalf. Mentioning the bot
+ * in a group counts too — that's the other way people address it.
+ *
+ * This consumes the message so `chatbot` can't answer the same one twice;
+ * where both are on, AutoAI is the one that handles being spoken to and
+ * `chatbot` keeps its DM small talk.
+ */
+async function autoAi(sock, m) {
+  if (!(await db.get("autoai")) || !m.body) return false;
+
+  // Not `m.fromMe`: the owner talks to the bot from their own account, so their
+  // replies arrive flagged as the bot's. What must be skipped is the bot's own
+  // output — otherwise every answer it sends is a reply to itself.
+  if (store.ownMessages.has(m.id)) return false;
+
+  const prefix = (await db.get("prefix")) || ".";
+  if (m.body.startsWith(prefix)) return false; // that's a command, not a question
+
+  const botIds = [sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser);
+  const addressed =
+    botIds.includes(m.quoted?.sender) || (m.mentions || []).some((jid) => botIds.includes(jid));
+  if (!addressed) return false;
+
+  const autoai = require("../utils/providers/autoai");
+
+  // A turn can run several commands and take a while. One at a time per chat,
+  // so a second message mid-answer queues behind it instead of racing it.
+  if (autoAiBusy.has(m.chat)) return false;
+  autoAiBusy.add(m.chat);
+
+  try {
+    const { buildContext } = require("../lib/ctx");
+    const registry = require("../lib/registry");
+    const ctx = await buildContext({
+      sock, m, command: registry.resolve("autoai"), text: m.body, prefix,
+    });
+    const answer = await autoai.run(ctx, m.body);
+    if (answer) await sock.sendMessage(m.chat, { text: answer }, { quoted: m.raw });
+  } catch (err) {
+    console.error("autoai failed:", err.message);
+    await sock.sendMessage(m.chat, { text: `❌ ${err.message}` }, { quoted: m.raw }).catch(() => {});
+  } finally {
+    autoAiBusy.delete(m.chat);
+  }
+  return true;
+}
+
 /** Run every passive hook. Returns true when the message was consumed. */
 async function run(sock, m) {
   const { maybeHandleRevoke } = require("./antidelete");
@@ -304,6 +356,7 @@ async function run(sock, m) {
   await afk(sock, m);
   await filters(sock, m);
   await autodl(sock, m);
+  if (await autoAi(sock, m)) return true;
   await chatbot(sock, m);
   return false;
 }
