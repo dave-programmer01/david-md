@@ -1,7 +1,9 @@
 const ytdlp = require("./ytdlp");
+const instagram = require("./instagram");
 
 const PATTERNS = [
-  { provider: "instagram", re: /https?:\/\/(?:www\.)?instagram\.com\/\S+/i },
+  // Only post/reel links — a profile link shared in chat isn't a download.
+  { provider: "instagram", re: /(?:https?:\/\/)?(?:[\w-]+\.)?(?:instagram\.com|instagr\.am)\/(?:[\w.]+\/)?(?:p|reels?|tv)\/[\w-]+\S*/i },
   { provider: "tiktok", re: /https?:\/\/(?:\w+\.)?tiktok\.com\/\S+/i },
   { provider: "facebook", re: /https?:\/\/(?:\w+\.)?(?:facebook\.com|fb\.watch)\/\S+/i },
   { provider: "pinterest", re: /https?:\/\/(?:\w+\.)?(?:pinterest\.[a-z.]+|pin\.it)\/\S+/i },
@@ -26,7 +28,7 @@ function detect(text) {
 async function download(provider, url) {
   if (provider === "youtube") return null;
 
-  const { files, meta } = await ytdlp.media(url);
+  const { files, meta } = provider === "instagram" ? await instagram.download(url) : await ytdlp.media(url);
   const first = files[0];
   const caption = meta.title && meta.title !== "Download" ? `*${meta.title}*` : "";
 

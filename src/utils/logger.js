@@ -17,6 +17,7 @@ const SIGNAL_NOISE = [
   /^Failed to decrypt/,
   /^SessionEntry/,
   /^Removing old closed session/,
+  /^Decrypted message with closed session/,
 ];
 
 function isSignalNoise(args) {

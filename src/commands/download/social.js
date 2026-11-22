@@ -1,5 +1,7 @@
 const ytdlp = require("../../utils/providers/ytdlp");
 const misc = require("../../utils/providers/misc");
+const instagram = require("../../utils/providers/instagram");
+const { sendMedia } = require("../../utils/deliver");
 
 const CATEGORY = "Download";
 
@@ -24,20 +26,7 @@ function socialCommand({ name, aliases = [], label, pattern, example, desc, fetc
       }
 
       await ctx.reply(`⏳ Fetching from ${label}…`);
-
-      const { files, meta } = await (fetcher ? fetcher(url) : ytdlp.media(url));
-      const caption =
-        `*${meta.title || label}*` +
-        (meta.uploader ? `\n_by ${meta.uploader}_` : "");
-
-      for (const [index, file] of files.entries()) {
-        const payload = file.isVideo
-          ? { video: file.buffer, caption: index === 0 ? caption : "" }
-          : { image: file.buffer, caption: index === 0 ? caption : "" };
-        await ctx.send(ctx.chat, payload);
-      }
-
-      if (files.length > 1) await ctx.reply(`✅ Sent ${files.length} item(s).`);
+      await sendMedia(ctx, await (fetcher ? fetcher(url) : ytdlp.media(url)), label);
     },
   };
 }
@@ -48,16 +37,18 @@ module.exports = [
     aliases: ["ig2", "instagram"],
     label: "Instagram",
     desc: "Download an Instagram post or reel",
-    pattern: /https?:\/\/(?:www\.)?instagram\.com\/\S+/i,
+    pattern: instagram.LINK,
     example: "https://instagram.com/p/ABC123",
+    fetcher: instagram.download,
   }),
 
   socialCommand({
     name: "story",
     label: "Instagram stories",
     desc: "Download an Instagram story",
-    pattern: /https?:\/\/(?:www\.)?instagram\.com\/(?:stories|s)\/\S+/i,
+    pattern: /(?:https?:\/\/)?(?:[\w-]+\.)?instagram\.com\/(?:stories|s)\/\S+/i,
     example: "https://instagram.com/stories/username/123456",
+    fetcher: instagram.download,
   }),
 
   socialCommand({

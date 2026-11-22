@@ -215,6 +215,14 @@ or export YouTube cookies to a file and point `YT_COOKIES` at it — noting that
 a logged-in account's cookies used from a datacentre IP can get that account
 flagged, so prefer a throwaway.
 
+**Instagram: "wouldn't give this server that post" / profile lookups fail** —
+Instagram rate-limits logged-out requests from datacentre IPs far sooner than
+from phones, and shows cloud servers a login wall for most profile pages. Public
+posts usually work again after a few minutes. If they keep failing, export
+Instagram cookies from a logged-in browser (a "cookies.txt" extension does it),
+upload the file, and point `IG_COOKIES` at its path. That also enables stories.
+The same caveat as YouTube applies: use a spare account, not your main one.
+
 **Settings keep resetting** — you're on Heroku without the Postgres add-on.
 
 **`.ai` says it needs a key** — put an Anthropic key in `config.js`. Every other

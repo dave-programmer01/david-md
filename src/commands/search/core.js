@@ -1,5 +1,6 @@
 const search = require("../../utils/providers/search");
-const ytdlp = require("../../utils/providers/ytdlp");
+const instagram = require("../../utils/providers/instagram");
+const { sendMedia } = require("../../utils/deliver");
 
 const CATEGORY = "Search";
 
@@ -82,35 +83,61 @@ module.exports = [
   {
     name: "ig",
     category: CATEGORY,
-    desc: "Look up an Instagram profile",
-    usage: ".ig username",
+    desc: "Look up an Instagram profile, or download a post/reel link",
+    usage: ".ig username  |  .ig <post or reel link>",
     permission: "public",
     execute: async (ctx) => {
-      const handle = ctx.text.trim().replace(/^@/, "").replace(/\/$/, "");
-      if (!handle || /\s/.test(handle)) {
-        return ctx.reply(`*Usage:* ${ctx.prefix}ig <username>\n\n${ctx.prefix}ig natgeo`);
-      }
-
-      const url = `https://www.instagram.com/${encodeURIComponent(handle)}/`;
-
-      try {
-        const info = await ytdlp.info(url);
+      // A bare `.ig` in reply to a message with a link uses that link.
+      const input = ctx.text.trim() || String(ctx.quoted?.text || "").match(instagram.LINK)?.[0] || "";
+      const target = instagram.parse(input);
+      if (!target) {
         return ctx.reply(
-          `╭═══〘 *@${handle}* 〙═══⊷❍\n` +
-            `┃◬│ Name : ${info.uploader || handle}\n` +
-            `┃◬│ Link : ${url}\n` +
-            `┃◬│\n` +
-            `┃◬│ ${String(info.description || "").slice(0, 200) || "_no bio available_"}\n` +
-            `╰═════════════════⊷\n\n` +
-            `_Download a post with_ ${ctx.prefix}insta <post link>`
-        );
-      } catch (err) {
-        return ctx.reply(
-          `❌ Couldn't read *@${handle}*.\n\n` +
-            `_Instagram blocks most profile lookups from servers. Public post links still work with_ ` +
-            `${ctx.prefix}insta_._`
+          `*Usage:* ${ctx.prefix}ig <username or link>\n\n` +
+            `${ctx.prefix}ig natgeo\n${ctx.prefix}ig https://instagram.com/reel/ABC123`
         );
       }
+
+      // Most people reach for .ig with a post link — download it rather than
+      // misreading the whole URL as a username.
+      if (target.kind === "post") {
+        await ctx.reply("⏳ Fetching from Instagram…");
+        return sendMedia(ctx, await instagram.download(target.url), "Instagram");
+      }
+
+      const { username } = target;
+      const result = await instagram.profile(username);
+      if (!result.ok) {
+        if (result.reason === "missing") return ctx.reply(`❌ There's no Instagram account called *@${username}*.`);
+        return ctx.reply(
+          `❌ Instagram wouldn't show *@${username}*'s profile to this server.\n\n` +
+            `Instagram blocks most profile lookups from cloud servers. ` +
+            `Post and reel links still download: ${ctx.prefix}ig <link>\n\n${result.hint}`
+        );
+      }
+
+      const p = result.profile;
+      const card =
+        `╭═══〘 *@${p.username}* 〙═══⊷❍\n` +
+        `┃◬│ Name      : ${p.name}\n` +
+        `┃◬│ Followers : ${p.followers}\n` +
+        `┃◬│ Following : ${p.following}\n` +
+        `┃◬│ Posts     : ${p.posts}\n` +
+        `┃◬│ Link      : ${p.url}\n` +
+        `┃◬│\n` +
+        `┃◬│ ${p.bio.slice(0, 200) || "_no bio_"}\n` +
+        `╰═════════════════⊷\n\n` +
+        `_Download a post with_ ${ctx.prefix}ig <post link>`;
+
+      // The profile picture is a bonus — if the CDN refuses, the card still goes.
+      if (p.picture) {
+        try {
+          const res = await fetch(p.picture, { headers: { "User-Agent": search.UA }, signal: AbortSignal.timeout(15_000) });
+          if (res.ok) {
+            return await ctx.reply({ image: Buffer.from(await res.arrayBuffer()), caption: card });
+          }
+        } catch {}
+      }
+      return ctx.reply(card);
     },
   },
 ];

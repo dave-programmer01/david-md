@@ -3,18 +3,28 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
+const { spawn } = require("child_process");
 const ffmpeg = require("fluent-ffmpeg");
 const { writeStickerMetadata } = require("./exif");
 
 // Prefer the system ffmpeg (present in the Docker image and on most panels);
 // fall back to the bundled binary for a bare `npm start` on a laptop.
+// FFMPEG_BIN mirrors whatever fluent-ffmpeg ends up using, for the places that
+// spawn ffmpeg directly (probing, and handing it to yt-dlp).
+let FFMPEG_BIN = "ffmpeg";
 try {
   const installer = require("@ffmpeg-installer/ffmpeg");
-  if (!process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(installer.path);
+  if (!process.env.FFMPEG_PATH) {
+    ffmpeg.setFfmpegPath(installer.path);
+    FFMPEG_BIN = installer.path;
+  }
 } catch {
   // System ffmpeg on PATH will be used instead.
 }
-if (process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+if (process.env.FFMPEG_PATH) {
+  ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+  FFMPEG_BIN = process.env.FFMPEG_PATH;
+}
 
 const tmp = (ext) => path.join(os.tmpdir(), `david-${crypto.randomBytes(6).toString("hex")}.${ext}`);
 const unlink = (...files) => Promise.all(files.map((f) => fs.promises.unlink(f).catch(() => {})));
@@ -53,6 +63,108 @@ function run({ inputs, inExt = "mp4", outExt = "mp4", inputOptions = [], outputO
       await unlink(...inFiles, outFile);
     }
   })();
+}
+
+// ── WhatsApp-playable video ──────────────────────────────────────────────
+
+/**
+ * Run ffmpeg directly and collect stderr. `ffmpeg -i file` with no output
+ * exits non-zero by design, so the exit code is deliberately not an error
+ * here — callers judge success from the output (or the file it wrote).
+ */
+function spawnFfmpeg(args, { timeout = 240_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(FFMPEG_BIN, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeout);
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stderr });
+    });
+  });
+}
+
+/**
+ * Read container and codecs from ffmpeg's input banner. ffprobe would be
+ * neater, but the bundled @ffmpeg-installer binary ships without it, and this
+ * has to work on panels that only have that.
+ */
+async function probeVideo(file) {
+  const { stderr } = await spawnFfmpeg(["-hide_banner", "-i", file], { timeout: 30_000 });
+  const container = stderr.match(/^Input #0, (.+?), from /m)?.[1] || "";
+  const lines = stderr.split("\n").filter((l) => /^\s*Stream #/.test(l));
+
+  // Cover art inside an mp4 shows up as an mjpeg "video" stream — not the video.
+  const videoLine = lines.find((l) => /Video: /.test(l) && !/attached pic/.test(l));
+  const audioLine = lines.find((l) => /Audio: /.test(l));
+  if (!videoLine) return null;
+
+  return {
+    container,
+    vcodec: videoLine.match(/Video: (\w+)/)?.[1] || "",
+    pixfmt: videoLine.match(/Video: \w+[^,]*, (\w+)/)?.[1] || "",
+    acodec: audioLine?.match(/Audio: (\w+)/)?.[1] || null,
+  };
+}
+
+/**
+ * Make sure a video will actually play inside WhatsApp, which only handles
+ * H.264 (8-bit 4:2:0) with AAC/MP3 audio in an MP4. Sites increasingly serve
+ * their best renditions as VP9, AV1 or HEVC, and 10-bit H.264 exists too — all
+ * of which WhatsApp accepts on upload and then shows as an unplayable video.
+ *
+ * Files that are already compatible are returned untouched. Otherwise only the
+ * stream that's wrong is re-encoded (a WebM/MKV with good codecs is just
+ * re-wrapped), and re-encodes are capped at 1280px on the long side — WhatsApp
+ * recompresses to around that anyway, and it keeps CPU time sane on small hosts.
+ */
+async function ensurePlayable(file) {
+  let info;
+  try {
+    info = await probeVideo(file);
+  } catch {
+    // No usable ffmpeg at all — nothing can be checked or fixed, so pass the
+    // file through rather than failing a download that may well be fine.
+    return fs.promises.readFile(file);
+  }
+  if (!info) return fs.promises.readFile(file);
+
+  const videoOk = info.vcodec === "h264" && /^yuvj?420p$/.test(info.pixfmt);
+  const audioOk = !info.acodec || ["aac", "mp3"].includes(info.acodec);
+  const containerOk = /\bmp4\b/.test(info.container) && /\.mp4$/i.test(file);
+  if (videoOk && audioOk && containerOk) return fs.promises.readFile(file);
+
+  const out = tmp("mp4");
+  const args = ["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-map", "0:v:0", "-map", "0:a:0?"];
+  if (videoOk) {
+    args.push("-c:v", "copy");
+  } else {
+    args.push(
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+      "-vf",
+      "scale=w='if(gte(iw,ih),trunc(min(1280,iw)/2)*2,-2)':h='if(gte(iw,ih),-2,trunc(min(1280,ih)/2)*2)'"
+    );
+  }
+  args.push(...(audioOk ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "128k"]));
+  args.push("-movflags", "+faststart", out);
+
+  try {
+    const { code, stderr } = await spawnFfmpeg(args);
+    if (code !== 0) {
+      throw new Error(stderr.trim().split("\n").pop() || `ffmpeg exited ${code}`);
+    }
+    return await fs.promises.readFile(out);
+  } catch (err) {
+    console.warn(`  ↳ couldn't convert ${info.vcodec}/${info.acodec} video for WhatsApp: ${err.message}`);
+    throw new Error("That video is in a format WhatsApp can't play, and converting it failed.");
+  } finally {
+    await unlink(out);
+  }
 }
 
 // ── Stickers ─────────────────────────────────────────────────────────────
@@ -330,7 +442,7 @@ async function textToSticker(text, { color = "#ffffff" } = {}) {
 }
 
 module.exports = {
-  run, tmp, unlink,
+  run, tmp, unlink, FFMPEG_BIN, probeVideo, ensurePlayable,
   convertToSticker, convertVideoToSticker, convertMediaToSticker,
   stickerToImage, toMp4, toGif,
   toMp3, audioEffect, AUDIO_EFFECTS,

@@ -3,6 +3,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
+const sharp = require("sharp");
+const mediaUtil = require("../media");
 
 /**
  * Every download command routes through yt-dlp rather than a per-site scraper
@@ -339,31 +341,91 @@ const TIKTOK_API_HOSTS = [
   "api19-normal-c-useast1a.tiktokv.com",
 ];
 
-async function media(url) {
-  const meta = await info(url).catch(() => ({ title: "Download", uploader: "", description: "" }));
+/**
+ * yt-dlp needs ffmpeg to merge the separate video and audio streams that
+ * Instagram (and most sites) serve their best quality as. On a panel the only
+ * ffmpeg is the npm-bundled one, which isn't on PATH, so yt-dlp can't find it
+ * and the merge fails. Point it at the same binary the bot uses — but only when
+ * PATH has none, so the Docker image keeps its system ffmpeg (and ffprobe).
+ */
+const onPath = (name) =>
+  String(process.env.PATH || "")
+    .split(path.delimiter)
+    .some((dir) => dir && fs.existsSync(path.join(dir, name)));
+
+const FFMPEG_ARGS =
+  process.env.FFMPEG_PATH || (!onPath("ffmpeg") && mediaUtil.FFMPEG_BIN !== "ffmpeg")
+    ? ["--ffmpeg-location", mediaUtil.FFMPEG_BIN]
+    : [];
+
+const VIDEO_EXT = /\.(mp4|m4v|mkv|webm|mov)$/i;
+const IMAGE_EXT = /\.(jpe?g|png|webp|avif|heic|gif)$/i;
+
+/** WhatsApp images should be JPEG or PNG; thumbnails often arrive as WebP. */
+async function toSendableImage(file) {
+  const buffer = await fs.promises.readFile(file);
+  const { format } = await sharp(buffer).metadata();
+  if (format === "jpeg" || format === "png") return buffer;
+  return sharp(buffer, { animated: false }).jpeg({ quality: 90 }).toBuffer();
+}
+
+/** The first info JSON yt-dlp printed — the post itself, or a carousel's first item. */
+function firstInfo(stdout) {
+  for (const line of String(stdout || "").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      return JSON.parse(trimmed);
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Download every item of a post and return { files, meta }.
+ *
+ * `photos: true` also saves each item's image (yt-dlp's "thumbnail"), which is
+ * the only way to get photo posts out of it: yt-dlp is a video tool and calls
+ * an Instagram photo "No video formats found". With the error ignored, a photo
+ * entry still writes its image, and a video entry's image is simply dropped in
+ * favour of the video.
+ *
+ * `args` carries site-specific flags, e.g. Instagram cookies.
+ */
+async function media(url, { args = [], photos = false } = {}) {
   const isTikTok = /tiktok\.com/i.test(String(url));
 
-  // Prefer the highest-resolution, highest-bitrate rendition and merge to mp4
-  // when video and audio arrive as separate streams. For TikTok this pulls the
-  // full-quality, non-watermarked source rather than the smaller muxed preview;
-  // for photo posts the `b` fallback just grabs the image.
+  // Prefer H.264 first, and only then the highest resolution and bitrate.
+  // Sorting on resolution alone picked Instagram's best renditions, which are
+  // increasingly VP9/AV1 — WhatsApp accepts those and then won't play them.
+  // Video and audio arriving as separate streams are merged to mp4.
+  // --print-json carries the metadata out of the same call, so the site is hit
+  // once per command rather than twice (Instagram rate-limits servers hard).
   const download = (dir, extra = []) =>
     run([
       "-f", "bv*+ba/b",
-      "-S", "res,vbr,ext:mp4:m4a",
+      "-S", "vcodec:h264,res,vbr,acodec:aac,ext:mp4:m4a",
       "--merge-output-format", "mp4",
       "--no-warnings",
+      "--print-json",
+      ...FFMPEG_ARGS,
+      ...(photos
+        ? ["--write-thumbnail", "--ignore-no-formats-error", "--no-write-playlist-metafiles"]
+        : []),
+      ...args,
       ...extra,
       "-o", path.join(dir, "%(autonumber)s.%(ext)s"),
       url,
     ]);
 
+  let stdout = "";
   const files = await withTempDir(async (dir) => {
+    let failure = null;
     if (isTikTok) {
       let lastErr;
       for (const host of TIKTOK_API_HOSTS) {
         try {
-          await download(dir, ["--extractor-args", `tiktok:api_hostname=${host}`]);
+          stdout = await download(dir, ["--extractor-args", `tiktok:api_hostname=${host}`]);
           lastErr = null;
           break;
         } catch (e) {
@@ -372,29 +434,52 @@ async function media(url) {
       }
       // If every API host refused, try the plain webpage path once — it works
       // when the mobile API itself is having a bad day.
-      if (lastErr) await download(dir).catch(() => { throw lastErr; });
+      if (lastErr) stdout = await download(dir).catch(() => { throw lastErr; });
     } else {
-      await download(dir);
-    }
-
-    const names = await fs.promises.readdir(dir);
-    const out = [];
-    for (const name of names.slice(0, 10)) {
-      // Skip yt-dlp's in-progress and sidecar files — a failed attempt can
-      // leave a .part behind that would otherwise be sent as a broken "image".
-      if (/\.(part|ytdl|temp|json|txt|vtt)$/i.test(name)) continue;
-      const full = path.join(dir, name);
-      const stat = await fs.promises.stat(full);
-      if (stat.size > MAX_BYTES) continue;
-      out.push({
-        buffer: await fs.promises.readFile(full),
-        name,
-        isVideo: /\.(mp4|mkv|webm|mov)$/i.test(name),
+      // A carousel can fail on one item and still deliver the rest, so an
+      // error only counts if nothing usable was written.
+      stdout = await download(dir).catch((err) => {
+        failure = err;
+        return "";
       });
     }
-    if (!out.length) throw new Error("Nothing downloadable was found at that link (or it was too large).");
+
+    // Group by item: "00001.mp4" and its image "00001.jpg" are the same entry.
+    const items = new Map();
+    for (const name of (await fs.promises.readdir(dir)).sort()) {
+      // Skip yt-dlp's in-progress and sidecar files — a failed attempt can
+      // leave a .part behind that would otherwise be sent as a broken "image",
+      // and an unmerged .m4a is audio, not a picture.
+      if (/\.(part|ytdl|temp)$/i.test(name)) continue;
+      const kind = VIDEO_EXT.test(name) ? "video" : IMAGE_EXT.test(name) ? "image" : null;
+      if (!kind) continue;
+      const key = name.split(".")[0];
+      const entry = items.get(key) || {};
+      if (!entry[kind]) entry[kind] = name;
+      items.set(key, entry);
+    }
+
+    const out = [];
+    let lastErr = null;
+    for (const entry of [...items.values()].slice(0, 10)) {
+      const name = entry.video || entry.image;
+      const full = path.join(dir, name);
+      try {
+        const buffer = entry.video ? await mediaUtil.ensurePlayable(full) : await toSendableImage(full);
+        if (buffer.length > MAX_BYTES) continue;
+        out.push({ buffer, name, isVideo: Boolean(entry.video) });
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!out.length) {
+      throw failure || lastErr || new Error("Nothing downloadable was found at that link (or it was too large).");
+    }
     return out;
   });
+
+  const info = firstInfo(stdout);
+  const meta = info ? shapeMeta(info, url) : { title: "Download", uploader: "", description: "" };
   return { files, meta };
 }
 
